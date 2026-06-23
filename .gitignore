@@ -1,0 +1,152 @@
+# Byte-compiled / optimized / DLL files
+__pycache__/
+*.py[cod]
+*$py.class
+
+# C extensions
+*.so
+
+# Distribution / packaging
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+share/python-wheels/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+MANIFEST
+
+# Virtual environments
+venv/
+.env/
+ENV/
+env/
+.venv/
+
+# Pip
+pip-log.txt
+pip-delete-this-directory.txt
+
+# Unit test / coverage reports
+htmlcov/
+.tox/
+.nox/
+.coverage
+.coverage.*
+.cache
+pytest_cache/
+nosetests.xml
+coverage.xml
+*.cover
+*.py,cover
+.hypothesis/
+
+# Type checkers
+.mypy_cache/
+.pyre/
+.pytype/
+
+# Jupyter Notebook
+.ipynb_checkpoints/
+
+# VS Code
+.vscode/
+
+# PyCharm
+.idea/
+
+# Logs
+*.log
+
+# dotenv environment variables
+.env
+.env.*
+
+# SQLite databases
+*.sqlite3
+*.db
+
+# OS generated files
+.DS_Store
+Thumbs.db
+
+# Temporary files
+*.tmp
+*.temp
+*.swp
+*.swo
+
+# Docker
+docker-compose.override.yml
+
+# FastAPI / Flask / Django
+instance/
+.webassets-cache/
+
+# ML / Data Science
+models/
+checkpoints/
+wandb/
+mlruns/
+tensorboard/
+runs/
+*.h5
+*.pt
+*.pth
+*.ckpt
+*.onnx
+
+# Kafka / streaming temp files
+*.kafka
+logs/
+
+# Secrets
+secrets.json
+config.local.yaml
+credentials.json
+
+# Cache
+.cache/
+*.cache
+
+# Local runtime files
+*.pid
+*.sock
+
+# macOS
+.AppleDouble
+.LSOverride
+
+# Linux
+*~
+
+# Generated reports
+reports/
+exports/
+
+# Node modules (if frontend included)
+node_modules/
+
+# Build artifacts
+*.out
+*.exe
+*.class
+
+# Terraform
+.terraform/
+*.tfstate
+*.tfstate.*
+test.json
+alarms_scrubbed6.json
+alarms_scrubbed7.json
+test.json
