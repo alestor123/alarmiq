@@ -1,7 +1,7 @@
 """
-AlarmIQ — FastAPI Backend
-REST + WebSocket API. Simulation runs in a background thread (CPU-bound RF scoring
-never blocks the event loop), updates are pushed via asyncio.Queue → WebSocket.
+AlarmIQ — FastAPI Backend (Socket.IO Enhanced Edition)
+REST + WebSocket + Socket.IO API. Simulation runs in a background thread,
+updates are pushed via asyncio.Queue → WebSocket AND Socket.IO /predictions namespace.
 """
 
 import os
@@ -9,20 +9,26 @@ import json
 import asyncio
 import warnings
 import threading
+import math
 warnings.filterwarnings("ignore")
 
 from datetime import datetime, timedelta, timezone
-from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect, UploadFile, File
+from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect, UploadFile, File, Query
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import HTMLResponse
+from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 import uvicorn
+import socketio as socketio_lib
 
 from predictor import predictor
 from ml_pipeline import normalise_node
+from socketio_server import sio, set_predictor_ref, broadcast_prediction, broadcast_llm_summary, get_status as sio_get_status
+from llm_summarizer import summarize_node_alert
 
 DATA_PATH  = os.path.join(os.path.dirname(__file__), "..", "alarms_scrubbed6.json")
 DASHBOARD  = os.path.join(os.path.dirname(__file__), "dashboard.html")
+PUBLIC_DIR = os.path.join(os.path.dirname(__file__), "..", "public")
 
 # Global variable to store computed dataset metadata (with fallback to pre-computed static values)
 DEFAULT_METADATA = {
@@ -153,8 +159,19 @@ def _compute_dataset_metadata():
         print(f"[startup] Error computing dataset metadata: {e}")
 
 
-app = FastAPI(title="AlarmIQ", version="1.0.0")
+app = FastAPI(title="AlarmIQ", version="2.0.0")
 app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["*"], allow_headers=["*"])
+
+# Mount public static files for BSNL assets
+if os.path.isdir(PUBLIC_DIR):
+    app.mount("/public", StaticFiles(directory=PUBLIC_DIR), name="public")
+
+# Socket.IO ASGI wrapper — this is the uvicorn entrypoint
+socket_app = socketio_lib.ASGIApp(sio, other_asgi_app=app)
+
+# In-memory event log for paginated /api/events
+_event_log: list = []  # append-only list of alarm feed entries
+_EVENT_LOG_MAX = 50000
 
 # ── Shared state (thread-safe via GIL for simple reads/writes) ────────────────
 sim_state = {
@@ -212,6 +229,26 @@ def _simulation_thread(loop: asyncio.AbstractEventLoop, score_every: int = 1000)
     def push(payload):
         asyncio.run_coroutine_threadsafe(_update_queue.put(payload), loop)
 
+    def sio_push(node):
+        """Fire-and-forget Socket.IO broadcast for a node's prediction."""
+        try:
+            payload = predictor.build_socketio_payload(node)
+            if payload:
+                payload["simulation"] = {
+                    "is_running": sim_state["running"],
+                    "speed_mode": _get_speed_mode(),
+                    "alarms_processed": sim_state["ingested"],
+                    "total_alarms": sim_state["total"],
+                    "progress_pct": round(sim_state["ingested"] / max(sim_state["total"], 1) * 100, 2),
+                    "current_alarm_ts": predictor.latest_sim_time.isoformat() if predictor.latest_sim_time else None,
+                }
+                asyncio.run_coroutine_threadsafe(broadcast_prediction(payload), loop)
+                # Fire LLM summary for HIGH/CRITICAL nodes (non-blocking)
+                if payload["risk"]["level"] in ("HIGH", "CRITICAL"):
+                    asyncio.run_coroutine_threadsafe(_trigger_llm_summary(node, payload), loop)
+        except Exception as e:
+            pass  # Never block scoring hot path
+
     for i, alarm in enumerate(alarms):
         # FAST PATH: Score ONLY the active node that received the alarm (<1ms)
         predictor.ingest_alarm(alarm, score=True)
@@ -224,6 +261,13 @@ def _simulation_thread(loop: asyncio.AbstractEventLoop, score_every: int = 1000)
         sim_state["recent_alarms"].append(feed_entry)
         if len(sim_state["recent_alarms"]) > 60:
             sim_state["recent_alarms"].pop(0)
+        # Append to paginated event log
+        _event_log.append(feed_entry)
+        if len(_event_log) > _EVENT_LOG_MAX:
+            _event_log.pop(0)
+
+        # Socket.IO broadcast for this node
+        sio_push(alarm["node"])
 
         # Dynamic sleep checking
         sleep_sec = sim_state.get("sleep_ms", 150) / 1000.0
@@ -410,15 +454,46 @@ async def kafka_consumer_task():
         print("[kafka-consumer] Consumer stopped.")
 
 
+# ── Helper functions ──────────────────────────────────────────────────────────
+def _get_speed_mode() -> str:
+    ms = sim_state.get("sleep_ms", 150)
+    if ms >= 500: return "slow"
+    if ms >= 50: return "medium"
+    if ms >= 5: return "fast"
+    return "hyper"
+
+async def _trigger_llm_summary(node: str, sio_payload: dict):
+    """Fire-and-forget LLM summary generation for a node."""
+    try:
+        risk = sio_payload.get("risk", {})
+        markov = sio_payload.get("markov_forecast", {})
+        topo = sio_payload.get("topology", {})
+        result = await summarize_node_alert(
+            node=node,
+            risk_score=risk.get("score", 0),
+            risk_level=risk.get("level", "HIGH"),
+            ttf_minutes=str(risk.get("ttf_minutes", "N/A")),
+            next_condition=markov.get("next_condition", "UNKNOWN"),
+            transition_probability=markov.get("transition_probability", 0),
+            predicted_transition_path=markov.get("predicted_transition_path", []),
+            top_features=sio_payload.get("top_features", []),
+            recent_alarms=sio_payload.get("recent_alarms_raw", []),
+            neighbor_summary=str(topo.get("neighbors", [])),
+        )
+        if result:
+            await broadcast_llm_summary(result)
+    except Exception as e:
+        print(f"[llm] Error triggering summary for {node}: {e}")
+
 # ── Startup ───────────────────────────────────────────────────────────────────
 @app.on_event("startup")
 async def startup():
     global _update_queue
     _update_queue = asyncio.Queue()
     predictor.load()
+    set_predictor_ref(predictor)
 
     # ── Guarantee simulation is IDLE on every fresh server boot ──
-    # Simulation only starts when the user clicks ► Play Simulation.
     sim_state["running"]         = False
     sim_state["ingested"]        = 0
     sim_state["total"]           = 0
@@ -433,7 +508,14 @@ async def startup():
     # Start broadcaster coroutine
     asyncio.create_task(broadcaster())
 
-    # Start Kafka consumer only if KAFKA_BROKER env var is set (Option 1)
+    # Initialize Telegram notifier
+    try:
+        import telegram_notifier
+        telegram_notifier.init_telegram(asyncio.get_event_loop())
+    except Exception as te:
+        print(f"[startup] Failed to initialize Telegram notifier: {te}")
+
+    # Start Kafka consumer only if KAFKA_BROKER env var is set
     if os.environ.get("KAFKA_BROKER"):
         asyncio.create_task(kafka_consumer_task())
 
@@ -603,9 +685,131 @@ def reset_all_state():
     return {"status": "reset"}
 
 @app.get("/api/predictions/verification")
-def get_verification():
-    """Return the prediction verification ledger with precision metrics."""
-    return predictor.get_verification_ledger()
+def get_verification(
+    status: str = Query("ALL"),
+    page: int = Query(1, ge=1),
+    limit: int = Query(20, ge=1, le=100)
+):
+    """Return the prediction verification ledger with precision metrics, paginated."""
+    ledger = predictor.get_verification_ledger()
+    all_items = ledger.get("resolved", []) + ledger.get("pending", [])
+    
+    all_items = sorted(all_items, key=lambda x: x.get("predicted_at", ""), reverse=True)
+    
+    if status and status != "ALL":
+        filtered_items = []
+        for item in all_items:
+            item_status = item.get("status", "")
+            if status == "TRUE_POSITIVE" and "True Positive" in item_status:
+                filtered_items.append(item)
+            elif status == "FALSE_POSITIVE" and "False Positive" in item_status:
+                filtered_items.append(item)
+            elif status == "PENDING" and "Pending" in item_status:
+                filtered_items.append(item)
+        all_items = filtered_items
+
+    total = len(all_items)
+    pages = max(1, math.ceil(total / limit))
+    start = (page - 1) * limit
+    end = start + limit
+    ledger["items"] = all_items[start:end]
+    ledger["page"] = page
+    ledger["pages"] = pages
+    ledger["total_items"] = total
+    return ledger
+
+
+@app.get("/api/events")
+def get_events(page: int = Query(1, ge=1), limit: int = Query(50, ge=1, le=200)):
+    """Return paginated alarm event log."""
+    total = len(_event_log)
+    pages = max(1, math.ceil(total / limit))
+    start = max(0, total - page * limit)
+    end = max(0, total - (page - 1) * limit)
+    events = list(reversed(_event_log[start:end]))
+    return {"events": events, "total": total, "page": page, "pages": pages}
+
+@app.get("/api/topology")
+def topology_graph():
+    """Return the complete static topology graph with live risk overlays."""
+    from predictor import TOPOLOGY
+    nodes = []
+    links = []
+    added_links = set()
+
+    for short_name, entry in TOPOLOGY.items():
+        if not isinstance(entry, dict):
+            continue
+        # Find live risk info for this node
+        risk_level = "LOW"
+        risk_score = 0.0
+        full_name = short_name
+        for n, s in predictor._scores.items():
+            if n.split(".")[0] == short_name:
+                risk_level = s.get("risk_level", "LOW")
+                risk_score = round(s.get("risk_score", 0.0), 4)
+                full_name = n
+                break
+
+        nodes.append({
+            "id": short_name,
+            "fullName": full_name,
+            "riskLevel": risk_level,
+            "riskScore": risk_score,
+            "type": entry.get("type", "PE_ROUTER"),
+            "location": entry.get("location", "UNKNOWN"),
+        })
+
+        for neighbor in entry.get("neighbors", []):
+            link_key = tuple(sorted([short_name, neighbor]))
+            if link_key not in added_links:
+                added_links.add(link_key)
+                # Determine link status
+                link_status = "UP"
+                for n, s in predictor._scores.items():
+                    if n.split(".")[0] == neighbor:
+                        feats = s.get("features", {})
+                        if feats.get("link_down_count", 0) > 0 or feats.get("bgp_down_count", 0) > 0:
+                            link_status = "DOWN"
+                        break
+                links.append({
+                    "source": short_name,
+                    "target": neighbor,
+                    "status": link_status,
+                })
+
+    return {"nodes": nodes, "links": links}
+
+
+@app.get("/api/topology/rootcause")
+def topology_rootcause(node: str = Query(...)):
+    """Return root cause analysis for a specific node."""
+    from predictor import TOPOLOGY
+    score = predictor._scores.get(node)
+    if not score:
+        # Try matching by short name
+        for n, s in predictor._scores.items():
+            if n.split(".")[0] == node.split(".")[0]:
+                score = s
+                node = n
+                break
+    if not score:
+        raise HTTPException(404, f"Node {node} not found")
+    topo = score.get("topology_correlation", {})
+    return {
+        "node": node,
+        "root_cause_node": topo.get("root_cause_node"),
+        "root_cause_type": topo.get("root_cause_type", "UNKNOWN"),
+        "causal_chain": topo.get("causal_chain", []),
+        "impacted_services": topo.get("impacted_services", {}),
+        "neighbors": topo.get("neighbors", []),
+    }
+
+
+@app.get("/api/socketio/status")
+def socketio_status():
+    """Return Socket.IO connection status."""
+    return sio_get_status()
 
 class RepartitionPayload(BaseModel):
     test_size: float  # fraction for test, e.g. 0.80
@@ -760,4 +964,4 @@ async def websocket_endpoint(websocket: WebSocket):
         manager.disconnect(websocket)
 
 if __name__ == "__main__":
-    uvicorn.run("main:app", host="0.0.0.0", port=8001, reload=False)
+    uvicorn.run("main:socket_app", host="0.0.0.0", port=8001, reload=False)

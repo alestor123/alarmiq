@@ -1,0 +1,10 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 200 100">
+  <!-- BSNL Style Logo Placeholder -->
+  <rect width="200" height="100" fill="transparent"/>
+  <text x="50%" y="50%" dominant-baseline="middle" text-anchor="middle" font-family="Arial, sans-serif" font-weight="bold" font-size="40" fill="#003399">
+    BSNL
+  </text>
+  <!-- Semicircles around -->
+  <path d="M 20 50 A 30 30 0 0 1 180 50" fill="none" stroke="#FF6600" stroke-width="8" />
+  <path d="M 20 50 A 30 30 0 0 0 180 50" fill="none" stroke="#003399" stroke-width="8" />
+</svg>

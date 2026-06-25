@@ -72,13 +72,45 @@ _BG_BLU = "\033[44m"
 _SEV_CLR = {"CRITICAL": _RED, "HIGH": _RED, "MAJOR": _YEL, "MEDIUM": _YEL, "WARNING": _MAG, "MINOR": _BLU, "LOW": _GRN, "CLEARED": _DIM}
 
 # Network Topology Graph Connection Model (Adjacent Cisco Routers)
+# Extended with device_type and location for root cause analysis
 TOPOLOGY = {
-    "host-er2-router-03": ["host-er2-router-02", "host-er2-router-01", "demo-node-01"],
-    "host-er2-router-02": ["host-er2-router-03", "host-er2-router-01"],
-    "host-er2-router-01": ["host-er2-router-02", "host-er2-router-03", "host-pe1-router-01"],
-    "host-pe1-router-01": ["host-er2-router-01", "host-pe1-router-02"],
-    "host-pe1-router-02": ["host-pe1-router-01"],
-    "demo-node-01": ["host-er2-router-03"],
+    "host-er2-router-03": {
+        "neighbors": ["host-er2-router-02", "host-er2-router-01", "demo-node-01"],
+        "type": "PE_ROUTER", "location": "ER2"
+    },
+    "host-er2-router-02": {
+        "neighbors": ["host-er2-router-03", "host-er2-router-01"],
+        "type": "PE_ROUTER", "location": "ER2"
+    },
+    "host-er2-router-01": {
+        "neighbors": ["host-er2-router-02", "host-er2-router-03", "host-pe1-router-01"],
+        "type": "PE_ROUTER", "location": "ER2"
+    },
+    "host-pe1-router-01": {
+        "neighbors": ["host-er2-router-01", "host-pe1-router-02"],
+        "type": "PE_ROUTER", "location": "PE1"
+    },
+    "host-pe1-router-02": {
+        "neighbors": ["host-pe1-router-01"],
+        "type": "PE_ROUTER", "location": "PE1"
+    },
+    "demo-node-01": {
+        "neighbors": ["host-er2-router-03"],
+        "type": "CE", "location": "DEMO"
+    },
+}
+
+# Hardware/environmental alarm conditions that indicate a HARDWARE root cause
+HARDWARE_CONDITIONS = {
+    "cefcPowerStatusChange", "cefcFRURemoved", "FAN_MISSING", "FAN_FAILURE",
+    "POWER_SUPPLY_FAILURE", "temrouterrature alarm", "ACTIVE_CARD_REMOVED_OIR",
+    "IOSXE_RP_ALARM_INFO_MODULE",
+}
+
+# Routing protocol conditions
+ROUTING_CONDITIONS = {
+    "BGP-5-ADJCHANGE_DOWN", "ROUTING-ISIS-5-ADJCHANGE_DOWN",
+    "ROUTING-OSPF-5-ADJCHG", "ROUTING-LDP-5-NBR_CHANGE_DOWN", "mplsLdpSessionDown",
 }
 
 def _risk_level(score: float) -> str:
@@ -400,35 +432,119 @@ class NodeRiskPredictor:
     # ------------------------------------------------------------------
     def _topology_correlation(self, node: str, feats: dict, ref_time: datetime) -> dict:
         """
-        Evaluate if any neighboring network nodes are currently experiencing
-        a severe outage (CRITICAL/HIGH risk) and correlate it as the likely root cause.
+        Enhanced root cause analysis with HARDWARE/PROTOCOL/UPSTREAM_FAILURE detection.
+        Evaluates node's own conditions and neighboring nodes to determine root cause.
         """
         short_name = node.split(".")[0]
-        neighbors = TOPOLOGY.get(short_name, [])
-        if not neighbors:
-            return {"correlated": False}
+        topo_entry = TOPOLOGY.get(short_name)
+        if not topo_entry:
+            return {
+                "correlated": False, "root_cause_node": None,
+                "root_cause_type": None, "causal_chain": [],
+                "neighbors": [], "impacted_services": {
+                    "l3vpn_customers": 0, "l2vpn_customers": 0,
+                    "ibgp_peers_affected": 0, "ebgp_peers_affected": 0,
+                },
+            }
 
-        # Check if current node has active BGP or Link downs
-        has_local_issues = (
-            feats.get("bgp_down_count", 0.0) > 0 or
-            feats.get("link_down_count", 0.0) > 0
-        )
-        if not has_local_issues:
-            return {"correlated": False}
+        neighbor_names = topo_entry.get("neighbors", [])
+        device_type = topo_entry.get("type", "PE_ROUTER")
+        location = topo_entry.get("location", "UNKNOWN")
 
-        # Check if any neighbor is active and has HIGH or CRITICAL risk
-        for n_short in neighbors:
-            # Resolve neighbors from cached scores by matching prefix
+        # Build neighbor status list
+        neighbor_status = []
+        for n_short in neighbor_names:
+            n_topo = TOPOLOGY.get(n_short, {})
+            n_risk_level = "LOW"
+            n_risk_score = 0.0
+            n_link_status = "UP"
             for active_node, cached in self._scores.items():
                 if active_node.split(".")[0] == n_short:
-                    if cached["risk_level"] in ("HIGH", "CRITICAL"):
-                        return {
-                            "correlated":      True,
-                            "root_cause_node":  active_node,
-                            "neighbor_level":   cached["risk_level"],
-                            "reason":           f"Neighbor node {n_short} is currently down in {cached['risk_level']} state, triggering adjacent BGP/Link protocol collapse."
-                        }
-        return {"correlated": False}
+                    n_risk_level = cached.get("risk_level", "LOW")
+                    n_risk_score = cached.get("risk_score", 0.0)
+                    # Check if link is down
+                    n_feats = cached.get("features", {})
+                    if n_feats.get("link_down_count", 0) > 0 or n_feats.get("bgp_down_count", 0) > 0:
+                        n_link_status = "DOWN"
+                    break
+            neighbor_status.append({
+                "node": n_short,
+                "risk_level": n_risk_level,
+                "risk_score": round(n_risk_score, 4),
+                "link_status": n_link_status,
+                "device_type": n_topo.get("type", "PE_ROUTER") if isinstance(n_topo, dict) else "PE_ROUTER",
+                "location": n_topo.get("location", "UNKNOWN") if isinstance(n_topo, dict) else "UNKNOWN",
+            })
+
+        causal_chain = []
+        root_cause_node = None
+        root_cause_type = None
+
+        # ── Rule 1: HARDWARE root cause ──
+        # Check if this node has environmental/hardware alarms in current window
+        window = list(self._windows.get(node, []))
+        cutoff = ref_time - timedelta(hours=2)
+        recent_window = [a for a in window if a.get("ts") and a["ts"] >= cutoff]
+        hw_alarms = [a for a in recent_window if a.get("condition") in HARDWARE_CONDITIONS]
+        if hw_alarms:
+            root_cause_type = "HARDWARE"
+            root_cause_node = node
+            for a in sorted(hw_alarms, key=lambda x: x["ts"]):
+                ts_fmt = a["ts"].strftime("%H:%M") if isinstance(a["ts"], datetime) else str(a["ts"])
+                causal_chain.append(f"{a['condition']} at {ts_fmt}")
+            # Add subsequent routing alarms as secondary effects
+            routing_alarms = [a for a in recent_window if a.get("condition") in ROUTING_CONDITIONS and a["ts"] > hw_alarms[0]["ts"]]
+            for a in sorted(routing_alarms, key=lambda x: x["ts"])[:3]:
+                ts_fmt = a["ts"].strftime("%H:%M") if isinstance(a["ts"], datetime) else str(a["ts"])
+                causal_chain.append(f"{a['condition']} at {ts_fmt} (secondary)")
+
+        # ── Rule 2: PROTOCOL root cause ──
+        # If this node has BGP_DOWN and a neighbor PE is already CRITICAL
+        if not root_cause_type and feats.get("bgp_down_count", 0) > 0:
+            for ns in neighbor_status:
+                if ns["risk_level"] in ("HIGH", "CRITICAL") and ns["device_type"] == "PE_ROUTER":
+                    root_cause_type = "PROTOCOL"
+                    root_cause_node = ns["node"]
+                    causal_chain.append(f"{ns['node']} in {ns['risk_level']} state (root cause)")
+                    causal_chain.append(f"BGP-5-ADJCHANGE_DOWN on {short_name} (secondary victim)")
+                    break
+
+        # ── Rule 3: UPSTREAM_FAILURE ──
+        # If 3+ neighbors all have BGP_DOWN within same window
+        if not root_cause_type:
+            bgp_down_neighbors = [ns for ns in neighbor_status if ns["link_status"] == "DOWN"]
+            if len(bgp_down_neighbors) >= 3:
+                root_cause_type = "UPSTREAM_FAILURE"
+                root_cause_node = f"shared-upstream-{location}"
+                causal_chain.append(f"{len(bgp_down_neighbors)} neighbors lost connectivity simultaneously")
+                for ns in bgp_down_neighbors[:5]:
+                    causal_chain.append(f"{ns['node']} link DOWN")
+
+        # ── Compute impacted services ──
+        ibgp_affected = sum(1 for ns in neighbor_status if ns["link_status"] == "DOWN" and ns["device_type"] == "PE_ROUTER")
+        ebgp_affected = sum(1 for ns in neighbor_status if ns["link_status"] == "DOWN" and ns["device_type"] not in ("PE_ROUTER", "CE"))
+        # Estimate L3/L2 VPN impact based on node alarm severity
+        l3vpn_est = max(0, int(feats.get("bgp_down_count", 0) * 2))
+        l2vpn_est = max(0, int(feats.get("pw_updown_count", 0)))
+
+        if root_cause_type and feats.get("bgp_down_count", 0) > 0:
+            causal_chain.append(f"L3VPN customers impacted (~{l3vpn_est})")
+
+        return {
+            "correlated": root_cause_type is not None,
+            "root_cause_node": root_cause_node,
+            "root_cause_type": root_cause_type,
+            "neighbor_level": neighbor_status[0]["risk_level"] if neighbor_status else None,
+            "reason": causal_chain[0] if causal_chain else None,
+            "causal_chain": causal_chain,
+            "neighbors": neighbor_status,
+            "impacted_services": {
+                "l3vpn_customers": l3vpn_est,
+                "l2vpn_customers": l2vpn_est,
+                "ibgp_peers_affected": ibgp_affected,
+                "ebgp_peers_affected": ebgp_affected,
+            },
+        }
 
     # ------------------------------------------------------------------
     def get_warnings(self, ref_time: Optional[datetime] = None) -> list[dict]:
@@ -450,6 +566,193 @@ class NodeRiskPredictor:
             "model_name":     self.metrics.get("model_name", "N/A"),
             "model_auc":      self.metrics.get("roc_auc", 0.0),
         }
+
+    # ------------------------------------------------------------------
+    def build_socketio_payload(self, node: str) -> dict:
+        """
+        Build the full Socket.IO prediction_update payload for a node.
+        Returns the complete schema as specified in Task 0.
+        """
+        score_data = self._scores.get(node)
+        if not score_data:
+            return None
+
+        ref_time = self.latest_sim_time or datetime.now(tz=timezone.utc)
+        feats = score_data.get("features", {})
+        topo = score_data.get("topology_correlation", {"correlated": False})
+        top_features_raw = score_data.get("top_features", [])
+
+        # Build enriched top_features with bar_width_pct
+        max_contrib = max((abs(f.get("contribution", 0)) for f in top_features_raw), default=0.001)
+        top_features_enriched = []
+        for f in top_features_raw:
+            contrib = abs(f.get("contribution", 0))
+            top_features_enriched.append({
+                "feature": f.get("feature", ""),
+                "raw_value": f.get("value", 0),
+                "scaled_value": round(contrib / max_contrib, 4) if max_contrib > 0 else 0,
+                "importance": f.get("importance", 0),
+                "contribution": round(contrib, 6),
+                "bar_width_pct": min(100, int(contrib / max_contrib * 100)) if max_contrib > 0 else 0,
+            })
+
+        # Compute window boundaries
+        cutoff = ref_time - timedelta(hours=2)
+        window_start = cutoff.isoformat()
+        window_end = ref_time.isoformat()
+
+        # TTF as integer minutes
+        ttf_str = score_data.get("estimated_ttf", "Stable")
+        try:
+            import re
+            ttf_match = re.search(r'(\d+)', ttf_str)
+            ttf_minutes = int(ttf_match.group(1)) if ttf_match else None
+        except Exception:
+            ttf_minutes = None
+
+        # Markov forecast
+        next_cond = score_data.get("predicted_next_alarm", "None")
+        next_prob = score_data.get("predicted_next_alarm_prob", 0.0)
+        last_cond = score_data.get("last_alarm_condition", "None")
+        stages = score_data.get("predicted_stages", [])
+
+        predicted_path = [last_cond]
+        for s in stages:
+            predicted_path.append(f"{s['condition']} ({round(s['prob']*100)}%)")
+
+        top_transitions = []
+        if stages:
+            for s in stages:
+                top_transitions.append({"condition": s["condition"], "probability": round(s["prob"], 4)})
+        elif next_cond and next_cond != "None":
+            top_transitions.append({"condition": next_cond, "probability": round(next_prob, 4)})
+
+        # Recent alarms for raw feed
+        window_alarms = list(self._windows.get(node, []))
+        recent = [a for a in window_alarms if a.get("ts") and a["ts"] >= cutoff]
+        recent_sorted = sorted(recent, key=lambda x: x["ts"], reverse=True)[:20]
+        recent_alarms_raw = []
+        for a in recent_sorted:
+            recent_alarms_raw.append({
+                "alarm_id": hash(str(a.get("ts")) + a.get("condition", "")) % 9999999999,
+                "ts": a["ts"].isoformat() if isinstance(a["ts"], datetime) else str(a["ts"]),
+                "condition": a.get("condition", "UNKNOWN"),
+                "severity": a.get("severity", "UNKNOWN"),
+                "category": a.get("category", "System"),
+                "message": a.get("raw", {}).get("alarmsDTO", {}).get("message", "") if isinstance(a.get("raw"), dict) else "",
+            })
+
+        # Node history from node_stats
+        ns = (self.node_stats or {}).get(node, {})
+        failure_rate = ns.get("failure_rate", 0.0)
+        avg_daily = ns.get("avg_daily_alarms", 0.0)
+
+        # Network health summary
+        all_scores = list(self._scores.values())
+        level_counts = Counter(s.get("risk_level", "LOW") for s in all_scores)
+        ledger = self.get_verification_ledger()
+
+        # Simulation state (will be enriched by main.py before emission)
+        # This provides the predictor-side data; main.py adds sim state
+
+        # Determine speed mode from TTF
+        risk_score = score_data.get("risk_score", 0.0)
+        risk_level = score_data.get("risk_level", "LOW")
+
+        opt_threshold = self.metrics.get("optimal_threshold", 0.1924) if self.metrics else 0.1924
+
+        payload = {
+            "timestamp": ref_time.isoformat(),
+            "node": node,
+            "risk": {
+                "score": round(risk_score, 4),
+                "level": risk_level,
+                "calibrated_probability": round(risk_score, 4),
+                "optimal_threshold": round(opt_threshold, 4),
+                "ttf_minutes": ttf_minutes,
+            },
+            "top_features": top_features_enriched,
+            "alarm_breakdown": {
+                "window_start": window_start,
+                "window_end": window_end,
+                "window_duration_hours": 2,
+                "total_in_window": score_data.get("window_alarms", 0),
+                "critical": int(feats.get("critical_count", 0)),
+                "major": int(feats.get("major_count", 0)),
+                "minor": int(feats.get("minor_count", 0)),
+                "warning": int(feats.get("warning_count", 0)),
+                "cleared": int(feats.get("cleared_count", 0)),
+                "alarm_rate_per_hour": round(feats.get("alarm_rate_per_hour", 0), 2),
+                "alarm_burst_15min": int(feats.get("alarm_burst_15min", 0)),
+                "severity_escalation_score": round(feats.get("severity_escalation_score", 0), 4),
+                "alarm_density_minutes": round(feats.get("alarm_density", 0), 2),
+                "unique_conditions": int(feats.get("unique_conditions", 0)),
+                "trend_last_30m": round(feats.get("trend_last_30m", 0), 4),
+                "minutes_since_last_critical": round(feats.get("minutes_since_last_critical", 9999), 2),
+            },
+            "condition_counts": {
+                "bgp_down_count": int(feats.get("bgp_down_count", 0)),
+                "link_down_count": int(feats.get("link_down_count", 0)),
+                "optical_alarm_count": int(feats.get("optical_alarm_count", 0)),
+                "fru_removed_count": int(feats.get("fru_removed_count", 0)),
+                "pw_updown_count": int(feats.get("pw_updown_count", 0)),
+                "isis_down_count": int(feats.get("isis_down_count", 0)),
+                "ospf_down_count": int(feats.get("ospf_down_count", 0)),
+                "ssh_failure_count": int(feats.get("ssh_failure_count", 0)),
+                "cefc_power_count": int(feats.get("cefc_power_count", 0)),
+                "satellite_problem_count": int(feats.get("satellite_problem_count", 0)),
+                "performance_iface_count": int(feats.get("performance_iface_count", 0)),
+            },
+            "markov_forecast": {
+                "current_condition": last_cond,
+                "next_condition": next_cond,
+                "transition_probability": round(next_prob, 4),
+                "forecast_label": f"{next_cond} IMMINENT" if next_cond and next_cond != "None" and next_prob > 0.3 else "Stable",
+                "top_transitions": top_transitions,
+                "predicted_transition_path": predicted_path,
+                "lookup_level": "node",
+            },
+            "topology": {
+                "neighbors": topo.get("neighbors", []),
+                "correlated": topo.get("correlated", False),
+                "root_cause_node": topo.get("root_cause_node"),
+                "root_cause_type": topo.get("root_cause_type"),
+                "causal_chain": topo.get("causal_chain", []),
+                "impacted_services": topo.get("impacted_services", {
+                    "l3vpn_customers": 0, "l2vpn_customers": 0,
+                    "ibgp_peers_affected": 0, "ebgp_peers_affected": 0,
+                }),
+            },
+            "node_history": {
+                "failure_rate_per_day": round(failure_rate, 4),
+                "avg_daily_alarms": round(avg_daily, 2),
+                "total_historical_failures": int(failure_rate * 365) if failure_rate else 0,
+            },
+            "recent_alarms_raw": recent_alarms_raw,
+            "network_health_summary": {
+                "total_nodes": len(all_scores),
+                "critical_count": level_counts.get("CRITICAL", 0),
+                "high_count": level_counts.get("HIGH", 0),
+                "medium_count": level_counts.get("MEDIUM", 0),
+                "low_count": level_counts.get("LOW", 0),
+                "alarms_per_minute": round(sum(s.get("features", {}).get("alarm_rate_per_hour", 0) for s in all_scores) / 60, 2),
+                "live_precision": ledger.get("precision"),
+                "true_positives": ledger.get("true_positives", 0),
+                "false_positives": ledger.get("false_positives", 0),
+                "pending_predictions": ledger.get("pending_count", 0),
+                "total_predictions": ledger.get("total_predictions", 0),
+                "avg_time_to_verify_minutes": None,  # computed by caller if needed
+            },
+            "simulation": {
+                "is_running": False,  # enriched by main.py
+                "speed_mode": "slow",
+                "alarms_processed": 0,
+                "total_alarms": 0,
+                "progress_pct": 0,
+                "current_alarm_ts": ref_time.isoformat(),
+            },
+        }
+        return payload
 
     # ------------------------------------------------------------------
     def _detect_failure_now(self, node: str, ref_time: datetime) -> bool:
@@ -545,6 +848,21 @@ class NodeRiskPredictor:
         Print a beautiful, detailed CLI notification styled as an SMS text message dispatch for engineers.
         event_type: 'NEW_PREDICTION' | 'TRUE_POSITIVE' | 'FALSE_POSITIVE'
         """
+        try:
+            import telegram_notifier
+            if event_type == "NEW_PREDICTION":
+                msg = telegram_notifier.format_new_prediction(rec, ts)
+            elif event_type == "TRUE_POSITIVE":
+                msg = telegram_notifier.format_true_positive(rec, ts)
+            elif event_type == "FALSE_POSITIVE":
+                msg = telegram_notifier.format_false_positive(rec, ts)
+            else:
+                msg = None
+            if msg:
+                telegram_notifier.queue_message(msg)
+        except Exception as e:
+            print(f"[telegram] Failed to queue notification: {e}")
+
         import re
         ANSI_ESCAPE = re.compile(r'\x1b\[[0-9;]*m|\033\[[0-9;]*m')
         def visual_len(s):
@@ -624,7 +942,8 @@ class NodeRiskPredictor:
             _msg_line(f"   3. Check routing adjacency status:")
             _msg_line(f"      {_DIM}$ show bgp neighbors | show ospf neighbor{_RST}")
             
-            neighbors = TOPOLOGY.get(node.split(".")[0], [])
+            topo_entry = TOPOLOGY.get(node.split(".")[0], {})
+            neighbors = topo_entry.get("neighbors", []) if isinstance(topo_entry, dict) else topo_entry
             if neighbors:
                 _msg_line(f"   4. Inspect neighbor routers:")
                 _msg_line(f"      {_DIM}{', '.join(neighbors)}{_RST}")

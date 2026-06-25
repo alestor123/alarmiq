@@ -1,1579 +1,2303 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-<meta charset="UTF-8"/>
-<meta name="viewport" content="width=device-width, initial-scale=1.0"/>
-<title>AlarmIQ — Strictly for Diagnosis</title>
-<style>
-  :root {
-    --bg:       #0d1117;
-    --surface:  #161b22;
-    --border:   #30363d;
-    --text:     #e6edf3;
-    --muted:    #8b949e;
-    --critical: #ff4d4f;
-    --high:     #fa8c16;
-    --medium:   #fadb14;
-    --low:      #52c41a;
-    --cleared:  #3d444d;
-    --accent:   #58a6ff;
-  }
-  * { box-sizing: border-box; margin: 0; padding: 0; }
-  body { background: var(--bg); color: var(--text); font-family: 'Segoe UI', system-ui, sans-serif; font-size: 14px; }
-
-  /* ── Header ── */
-  header {
-    background: var(--surface);
-    border-bottom: 1px solid var(--border);
-    padding: 14px 24px;
-    display: flex; align-items: center; justify-content: space-between;
-  }
-  header h1 { font-size: 18px; font-weight: 700; color: var(--accent); letter-spacing: .5px; }
-  header h1 span { color: var(--muted); font-weight: 400; font-size: 13px; margin-left: 10px; }
-  #conn-status { font-size: 12px; display: flex; align-items: center; gap: 6px; color: var(--muted); }
-  #conn-dot { width: 8px; height: 8px; border-radius: 50%; background: #555; }
-  #conn-dot.live { background: var(--low); animation: pulse 1.5s infinite; }
-  @keyframes pulse { 0%,100%{opacity:1} 50%{opacity:.4} }
-
-  /* ── Stats bar ── */
-  #stats {
-    display: flex; gap: 12px; padding: 14px 24px;
-    border-bottom: 1px solid var(--border);
-    flex-wrap: wrap;
-  }
-  .stat-card {
-    background: var(--surface); border: 1px solid var(--border);
-    border-radius: 8px; padding: 10px 18px; flex: 1; min-width: 120px;
-    display: flex; flex-direction: column; gap: 4px;
-  }
-  .stat-card .val { font-size: 22px; font-weight: 700; }
-  .stat-card .lbl { font-size: 11px; color: var(--muted); text-transform: uppercase; letter-spacing: .5px; }
-  .stat-card.critical .val { color: var(--critical); }
-  .stat-card.high     .val { color: var(--high); }
-  .stat-card.medium   .val { color: var(--medium); }
-  .stat-card.low      .val { color: var(--low); }
-  .stat-card.info     .val { color: var(--accent); }
-
-  /* ── Progress bar ── */
-  #sim-bar-wrap {
-    padding: 8px 24px; background: var(--surface); border-bottom: 1px solid var(--border);
-    display: flex; align-items: center; gap: 12px; font-size: 12px; color: var(--muted);
-  }
-  #sim-bar { flex: 1; height: 6px; background: var(--border); border-radius: 3px; overflow: hidden; }
-  #sim-bar-fill { height: 100%; background: var(--accent); width: 0%; transition: width .4s; }
-
-  /* ── Main layout ── */
-  #main { display: grid; grid-template-columns: 1fr 340px; height: calc(100vh - 158px); }
-
-  /* ── Node grid ── */
-  #node-panel { overflow-y: auto; padding: 16px 24px; }
-  #node-panel h2 { font-size: 13px; color: var(--muted); text-transform: uppercase; letter-spacing: .5px; margin-bottom: 12px; }
-  #node-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(260px, 1fr)); gap: 10px; }
-
-  .node-card {
-    background: var(--surface); border: 1px solid var(--border);
-    border-radius: 8px; padding: 12px 14px; cursor: default;
-    transition: transform .15s, border-color .3s;
-    border-left: 3px solid var(--border);
-  }
-  .node-card:hover { transform: translateY(-1px); }
-  .node-card.CRITICAL { border-left-color: var(--critical); }
-  .node-card.HIGH     { border-left-color: var(--high); }
-  .node-card.MEDIUM   { border-left-color: var(--medium); }
-  .node-card.LOW      { border-left-color: var(--low); }
-
-  .node-card .top { display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 8px; }
-  .node-name { font-size: 12px; font-weight: 600; color: var(--text); word-break: break-all; flex: 1; margin-right: 8px; }
-  .risk-badge {
-    font-size: 10px; font-weight: 700; padding: 2px 7px; border-radius: 4px;
-    text-transform: uppercase; white-space: nowrap;
-  }
-  .CRITICAL .risk-badge { background: rgba(255,77,79,.15); color: var(--critical); }
-  .HIGH     .risk-badge { background: rgba(250,140,22,.15); color: var(--high); }
-  .MEDIUM   .risk-badge { background: rgba(250,219,20,.12); color: var(--medium); }
-  .LOW      .risk-badge { background: rgba(82,196,26,.12);  color: var(--low); }
-
-  .score-bar-wrap { height: 4px; background: var(--border); border-radius: 2px; overflow: hidden; margin-bottom: 6px; }
-  .score-bar-fill { height: 100%; border-radius: 2px; transition: width .5s; }
-  .CRITICAL .score-bar-fill { background: var(--critical); }
-  .HIGH     .score-bar-fill { background: var(--high); }
-  .MEDIUM   .score-bar-fill { background: var(--medium); }
-  .LOW      .score-bar-fill { background: var(--low); }
-
-  .node-meta { display: flex; justify-content: space-between; font-size: 11px; color: var(--muted); }
-  .node-features { margin-top: 8px; font-size: 11px; color: var(--muted); display: none; }
-  .node-card.CRITICAL .node-features,
-  .node-card.HIGH     .node-features { display: block; }
-  .feat-row { display: flex; justify-content: space-between; padding: 2px 0; border-top: 1px solid var(--border); }
-  .feat-row:first-child { border-top: none; }
-  .feat-name { color: var(--muted); }
-  .feat-val { color: var(--text); font-weight: 600; }
-
-  /* ── Right sidebar ── */
-  #sidebar { border-left: 1px solid var(--border); display: flex; flex-direction: column; overflow: hidden; }
-
-  /* ── Warnings panel ── */
-  #warnings-panel { flex: 1; overflow-y: auto; padding: 14px 16px; border-bottom: 1px solid var(--border); }
-  #warnings-panel h2 { font-size: 13px; color: var(--muted); text-transform: uppercase; letter-spacing: .5px; margin-bottom: 10px; }
-
-  .warning-card {
-    background: var(--bg); border: 1px solid var(--border);
-    border-left: 3px solid var(--critical); border-radius: 6px;
-    padding: 10px 12px; margin-bottom: 8px;
-  }
-  .warning-card.HIGH { border-left-color: var(--high); }
-  .warning-card .w-node { font-size: 12px; font-weight: 600; margin-bottom: 4px; color: var(--text); word-break: break-all; }
-  .warning-card .w-score { font-size: 11px; color: var(--muted); margin-bottom: 6px; }
-  .warning-card .w-feats { font-size: 11px; color: var(--muted); }
-  .warning-card .w-feats span { color: var(--high); font-weight: 600; }
-  #no-warnings { color: var(--low); font-size: 12px; padding: 8px 0; }
-
-  /* ── Alarm feed ── */
-  #feed-panel { height: 260px; overflow-y: auto; padding: 14px 16px; }
-  #feed-panel h2 { font-size: 13px; color: var(--muted); text-transform: uppercase; letter-spacing: .5px; margin-bottom: 10px; }
-  .alarm-row {
-    display: flex; align-items: flex-start; gap: 8px;
-    padding: 5px 0; border-bottom: 1px solid var(--border);
-    font-size: 11px; line-height: 1.4;
-    animation: fadeIn .3s;
-  }
-  @keyframes fadeIn { from{opacity:0;transform:translateY(-4px)} to{opacity:1;transform:none} }
-  .alarm-row:last-child { border-bottom: none; }
-  .sev-dot { width: 7px; height: 7px; border-radius: 50%; margin-top: 3px; flex-shrink: 0; }
-  .sev-dot.CRITICAL { background: var(--critical); }
-  .sev-dot.MAJOR    { background: var(--high); }
-  .sev-dot.WARNING  { background: var(--medium); }
-  .sev-dot.MINOR    { background: var(--accent); }
-  .sev-dot.CLEARED  { background: var(--cleared); }
-  .alarm-row .a-cond { font-weight: 600; color: var(--text); }
-  .alarm-row .a-node { color: var(--muted); }
-  .alarm-row .a-ts   { color: var(--muted); margin-left: auto; white-space: nowrap; font-size: 10px; }
-
-  /* ── TTF Labels ── */
-  .ttf-label.CRITICAL { color: var(--critical); font-weight: 700; }
-  .ttf-label.HIGH     { color: var(--high); font-weight: 700; }
-  .ttf-label.MEDIUM   { color: var(--medium); font-weight: 700; }
-  .ttf-label.LOW      { color: var(--muted); }
-
-  /* ── Prediction Verification Ledger ── */
-  #ledger-panel {
-    background: var(--surface);
-    border-top: 1px solid var(--border);
-    border-bottom: 1px solid var(--border);
-    padding: 14px 24px;
-  }
-  #ledger-panel h2 { font-size: 13px; font-weight: 700; color: var(--accent); margin-bottom: 10px; }
-  #ledger-metrics {
-    display: flex; gap: 12px; flex-wrap: wrap; margin-bottom: 12px;
-  }
-  .lm-card {
-    background: #1c2128; border: 1px solid var(--border); border-radius: 8px;
-    padding: 8px 16px; display: flex; flex-direction: column; gap: 3px; min-width: 110px;
-  }
-  .lm-card .lm-val { font-size: 20px; font-weight: 700; }
-  .lm-card .lm-lbl { font-size: 10px; color: var(--muted); text-transform: uppercase; letter-spacing: .4px; }
-  .lm-card.tp  { border-left: 3px solid var(--low); }
-  .lm-card.fp  { border-left: 3px solid var(--critical); }
-  .lm-card.pen { border-left: 3px solid var(--medium); }
-  .lm-card.prec{ border-left: 3px solid var(--accent); }
-
-  /* Ledger table */
-  #ledger-table-wrap { border: 1px solid var(--border); border-radius: 8px; overflow: hidden; }
-  #ledger-table { width: 100%; border-collapse: collapse; font-size: 11px; }
-  #ledger-table th {
-    position: sticky; top: 0; z-index: 2;
-    background: #0f1318; padding: 9px 12px;
-    text-align: left; color: var(--muted); font-weight: 600;
-    border-bottom: 1px solid var(--border); white-space: nowrap;
-    user-select: none; cursor: pointer;
-  }
-  #ledger-table th:hover { color: var(--text); }
-  #ledger-table td { padding: 8px 12px; border-bottom: 1px solid #1c2128; vertical-align: middle; line-height: 1.4; }
-  #ledger-table tr.data-row:hover td { background: #1c2128; }
-  #ledger-table tr.detail-row td { background: #0d1117; padding: 0; border-bottom: 1px solid var(--border); }
-  .detail-inner { padding: 12px 16px; display: flex; gap: 24px; flex-wrap: wrap; }
-  .detail-section { min-width: 200px; flex: 1; }
-  .detail-section h4 { font-size: 10px; text-transform: uppercase; letter-spacing: .5px; color: var(--accent); margin-bottom: 6px; }
-  .feat-bar-row { display: flex; align-items: center; gap: 8px; margin-bottom: 4px; }
-  .feat-name { font-size: 10px; color: var(--muted); min-width: 170px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-  .feat-bar-wrap { flex: 1; height: 6px; background: #21262d; border-radius: 3px; overflow: hidden; }
-  .feat-bar-fill { height: 100%; border-radius: 3px; background: var(--accent); transition: width .4s; }
-  .feat-val { font-size: 10px; color: var(--text); min-width: 40px; text-align: right; }
-
-  /* Badges */
-  .badge { display: inline-block; padding: 3px 10px; border-radius: 12px; font-size: 10px; font-weight: 700; white-space: nowrap; }
-  .badge.tp   { background: rgba(82,196,26,.12); color: #52c41a; border: 1px solid rgba(82,196,26,.4); }
-  .badge.fp   { background: rgba(255,77,79,.12);  color: #ff4d4f; border: 1px solid rgba(255,77,79,.4); }
-  .badge.pend { background: rgba(250,219,20,.12); color: #fadb14; border: 1px solid rgba(250,219,20,.4); animation: glowPend 2s ease-in-out infinite; }
-  @keyframes glowPend { 0%,100%{ box-shadow: 0 0 0 rgba(250,219,20,0); } 50%{ box-shadow: 0 0 8px rgba(250,219,20,.35); } }
-  .risk-chip { display: inline-block; padding: 2px 8px; border-radius: 5px; font-size: 10px; font-weight: 700; }
-  .risk-chip.CRITICAL { background: rgba(255,77,79,.18);  color: #ff4d4f; }
-  .risk-chip.HIGH     { background: rgba(250,140,22,.18); color: #fa8c16; }
-
-  /* Score bar */
-  .score-bar-wrap { display: flex; align-items: center; gap: 6px; }
-  .score-bar { width: 52px; height: 5px; background: #21262d; border-radius: 3px; overflow: hidden; }
-  .score-fill { height: 100%; border-radius: 3px; }
-
-  /* Filter tabs */
-  .ledger-tabs { display: flex; gap: 6px; margin-bottom: 10px; flex-wrap: wrap; }
-  .ltab {
-    font-size: 11px; padding: 4px 14px; border-radius: 20px; cursor: pointer;
-    border: 1px solid var(--border); background: var(--surface); color: var(--muted);
-    transition: all .15s;
-  }
-  .ltab.active { background: var(--accent); border-color: var(--accent); color: #0d1117; font-weight: 700; }
-  .ltab:hover:not(.active) { border-color: var(--muted); color: var(--text); }
-
-  /* Precision gauge */
-  .prec-gauge { display: flex; align-items: center; gap: 8px; margin-top: 2px; }
-  .prec-ring { position: relative; width: 38px; height: 38px; }
-  .prec-ring svg { transform: rotate(-90deg); }
-  .prec-ring-val { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; font-size: 8px; font-weight: 700; color: var(--accent); }
-
-  /* Empty state */
-  .ledger-empty { padding: 48px; text-align: center; color: var(--muted); }
-  .ledger-empty-icon { font-size: 36px; margin-bottom: 10px; }
-  .ledger-empty p { font-size: 12px; margin-top: 4px; }
-
-  /* ── Sandbox ── */
-  #sandbox {
-    background: #1c2128;
-    border-bottom: 1px solid var(--border);
-    padding: 12px 24px;
-    display: flex; flex-direction: column; gap: 8px;
-  }
-  .sandbox-title { font-size: 11px; font-weight: 700; text-transform: uppercase; color: var(--accent); letter-spacing: .5px; }
-  .sandbox-controls { display: flex; align-items: center; justify-content: space-between; gap: 16px; flex-wrap: wrap; }
-  .control-group { display: flex; align-items: center; gap: 8px; }
-  .control-group.separator { width: 1px; height: 24px; background: var(--border); }
-  .ctrl-lbl { font-size: 12px; color: var(--muted); font-weight: 500; }
-  .btn {
-    font-size: 11px; font-weight: 600; padding: 6px 12px; border-radius: 6px; cursor: pointer;
-    border: 1px solid var(--border); outline: none; transition: background .15s, border-color .15s, transform .1s;
-    background: var(--surface); color: var(--text);
-  }
-  .btn:active { transform: scale(0.97); }
-  .btn.accent-btn { background: var(--accent); border-color: var(--accent); color: #0d1117; }
-  .btn.accent-btn:hover { background: #79b8ff; }
-  .btn.clear-btn:hover { background: #3d444d; border-color: #8b949e; }
-  .btn.inject-btn:hover { border-color: var(--muted); }
-  .btn.inject-btn.minor { border-left: 3px solid var(--accent); }
-  .btn.inject-btn.major { border-left: 3px solid var(--high); }
-  .btn.inject-btn.critical { border-left: 3px solid var(--critical); }
-  #sandbox-node {
-    font-size: 11px; padding: 5px 8px; border-radius: 6px; background: var(--surface);
-    color: var(--text); border: 1px solid var(--border); outline: none; cursor: pointer;
-  }
-
-  /* ── Enterprise Glassmorphic Toasts ── */
-  #toast-container {
-    position: fixed;
-    top: 20px;
-    right: 20px;
-    z-index: 99999;
-    display: flex;
-    flex-direction: column;
-    gap: 12px;
-    pointer-events: none;
-    max-width: 400px;
-    width: calc(100vw - 40px);
-  }
-  .toast {
-    background: rgba(22, 27, 34, 0.85);
-    backdrop-filter: blur(12px);
-    -webkit-backdrop-filter: blur(12px);
-    border: 1px solid var(--border);
-    border-radius: 8px;
-    padding: 14px 16px;
-    pointer-events: auto;
-    box-shadow: 0 10px 30px rgba(0, 0, 0, 0.5);
-    transition: all 0.3s cubic-bezier(0.175, 0.885, 0.32, 1.1);
-    animation: toastSlideIn 0.4s cubic-bezier(0.175, 0.885, 0.32, 1.2) forwards;
-    display: flex;
-    flex-direction: column;
-    gap: 8px;
-  }
-  .toast.CRITICAL {
-    border-left: 4px solid var(--critical);
-  }
-  .toast.HIGH {
-    border-left: 4px solid var(--high);
-  }
-  .toast.slide-out {
-    animation: toastSlideOut 0.3s ease forwards;
-  }
-  .toast-header {
-    display: flex;
-    justify-content: space-between;
-    align-items: center;
-    border-bottom: 1px solid rgba(255, 255, 255, 0.08);
-    padding-bottom: 6px;
-  }
-  .toast-title {
-    font-size: 13px;
-    font-weight: 700;
-    color: var(--text);
-  }
-  .toast-close {
-    background: none;
-    border: none;
-    color: var(--muted);
-    font-size: 18px;
-    cursor: pointer;
-    line-height: 1;
-    padding: 0 0 0 10px;
-  }
-  .toast-close:hover {
-    color: var(--text);
-  }
-  .toast-body {
-    font-size: 11px;
-    color: var(--text);
-    line-height: 1.45;
-  }
-
-  @keyframes toastSlideIn {
-    from {
-      opacity: 0;
-      transform: translateX(120%) scale(0.9);
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>BSNL AlarmIQ — Predictive Failure Intelligence</title>
+  <link rel="icon" type="image/png" href="/public/logo.png" />
+  <!-- Modern Typography and Icons -->
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap" rel="stylesheet" />
+  <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css" rel="stylesheet" />
+  <!-- D3.js & Socket.io CDNs -->
+  <script src="https://d3js.org/d3.v7.min.js"></script>
+  <script src="https://cdn.socket.io/4.7.5/socket.io.min.js"></script>
+  <style>
+    :root {
+      /* BSNL Brand Colors */
+      --bsnl-blue: #003399;
+      --bsnl-orange: #FF6600;
+      
+      /* Premium Dark Theme */
+      --bg: #090d16;
+      --surface: #111827;
+      --surface-card: #1f2937;
+      --border: #374151;
+      --text: #f3f4f6;
+      --text-muted: #9ca3af;
+      
+      /* Risk Colors */
+      --color-critical: #ef4444;
+      --color-high: #f97316;
+      --color-medium: #eab308;
+      --color-low: #22c55e;
+      --color-cleared: #6b7280;
+      
+      /* Badges and states */
+      --bg-critical: rgba(239, 68, 68, 0.15);
+      --bg-high: rgba(249, 115, 22, 0.15);
+      --bg-medium: rgba(234, 179, 8, 0.15);
+      --bg-low: rgba(34, 197, 94, 0.15);
     }
-    to {
-      opacity: 1;
-      transform: translateX(0) scale(1);
+
+    * {
+      box-sizing: border-box;
+      margin: 0;
+      padding: 0;
+      font-family: 'Inter', sans-serif;
     }
-  }
-  @keyframes toastSlideOut {
-    from {
-      opacity: 1;
-      transform: translateX(0) scale(1);
-      margin-bottom: 0;
-      max-height: 200px;
+
+    body {
+      background-color: var(--bg);
+      color: var(--text);
+      display: flex;
+      flex-direction: column;
+      min-height: 100vh;
+      overflow-x: hidden;
     }
-    to {
-      opacity: 0;
-      transform: translateX(120%) scale(0.9);
-      margin-bottom: -60px;
-      max-height: 0;
-      padding-top: 0;
-      padding-bottom: 0;
+
+    /* ── BSNL Header ── */
+    header {
+      background-color: var(--surface);
+      border-bottom: 2px solid var(--bsnl-blue);
+      padding: 12px 24px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+    }
+
+    .brand-container {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+    }
+
+    .brand-logo {
+      height: 40px;
+      width: auto;
+    }
+
+    .brand-text h1 {
+      font-size: 20px;
+      font-weight: 800;
+      letter-spacing: -0.5px;
+      display: flex;
+      align-items: center;
+      gap: 6px;
+    }
+
+    .brand-text h1 span.highlight {
+      color: var(--bsnl-orange);
+    }
+
+    .brand-text p {
+      font-size: 11px;
+      color: var(--text-muted);
+      text-transform: uppercase;
+      letter-spacing: 1px;
+    }
+
+    .header-controls {
+      display: flex;
+      align-items: center;
+      gap: 16px;
+    }
+
+    .status-indicator {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      font-size: 12px;
+      color: var(--text-muted);
+    }
+
+    .status-dot {
+      width: 10px;
+      height: 10px;
+      border-radius: 50%;
+      background-color: var(--color-cleared);
+    }
+
+    .status-dot.connected {
+      background-color: var(--color-low);
+      box-shadow: 0 0 8px var(--color-low);
+    }
+
+    /* ── Sandbox Panel ── */
+    #sandbox {
+      background: var(--surface);
+      border-bottom: 1px solid var(--border);
+      padding: 14px 24px;
+      display: flex;
+      flex-direction: column;
+      gap: 10px;
+    }
+    .sandbox-title {
+      font-size: 11px;
+      font-weight: 800;
+      text-transform: uppercase;
+      color: var(--bsnl-orange);
+      letter-spacing: 0.5px;
+    }
+    .sandbox-controls {
+      display: flex;
+      flex-direction: column;
+      gap: 10px;
+    }
+    .control-row {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      flex-wrap: wrap;
+    }
+    .ctrl-lbl {
+      font-size: 11px;
+      font-weight: 700;
+      color: var(--text-muted);
+      text-transform: uppercase;
+    }
+    .btn {
+      font-size: 11px;
+      font-weight: 700;
+      padding: 6px 12px;
+      border-radius: 6px;
+      cursor: pointer;
+      border: 1px solid var(--border);
+      background: var(--surface-card);
+      color: var(--text);
+      transition: all 0.15s;
+      display: flex;
+      align-items: center;
+      gap: 4px;
+    }
+    .btn:hover:not(:disabled) {
+      background: var(--border);
+    }
+    .btn:disabled {
+      opacity: 0.5;
+      cursor: not-allowed;
+    }
+    .btn.accent-btn {
+      background: var(--bsnl-blue);
+      border-color: var(--bsnl-blue);
+      color: white;
+    }
+    .btn.accent-btn:hover:not(:disabled) {
+      background: #0044cc;
+    }
+    .btn.green-btn {
+      background: var(--color-low);
+      border-color: var(--color-low);
+      color: white;
+    }
+    .btn.green-btn:hover:not(:disabled) {
+      background: #1eb250;
+    }
+    .btn.inject-btn.minor { border-left: 3px solid var(--bsnl-blue); }
+    .btn.inject-btn.major { border-left: 3px solid var(--color-high); }
+    .btn.inject-btn.critical { border-left: 3px solid var(--color-critical); }
+
+    select, input[type="file"] {
+      font-size: 11px;
+      padding: 5px 8px;
+      border-radius: 6px;
+      background: var(--surface-card);
+      color: var(--text);
+      border: 1px solid var(--border);
+      outline: none;
+      cursor: pointer;
+    }
+
+    /* ── Main Layout (4-Panel Grid) ── */
+    .dashboard-grid {
+      display: grid;
+      grid-template-columns: repeat(2, 1fr);
+      grid-template-rows: auto 1fr;
+      gap: 16px;
+      padding: 16px;
+      flex: 1;
+    }
+
+    .panel {
+      background-color: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      display: flex;
+      flex-direction: column;
+      overflow: hidden;
+    }
+
+    .panel-header {
+      padding: 12px 16px;
+      border-bottom: 1px solid var(--border);
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      background: rgba(255,255,255,0.02);
+    }
+
+    .panel-title {
+      font-size: 14px;
+      font-weight: 700;
+      color: var(--text);
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+
+    .panel-title i {
+      color: var(--bsnl-orange);
+    }
+
+    .panel-body {
+      padding: 16px;
+      flex: 1;
+      overflow-y: auto;
+      position: relative;
+    }
+
+    /* ── Panel 1: Network Health Summary (Top-Left) ── */
+    .health-stats {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(130px, 1fr));
+      gap: 12px;
+    }
+
+    .stat-box {
+      background: var(--surface-card);
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      padding: 12px;
+      display: flex;
+      flex-direction: column;
+      gap: 4px;
+      position: relative;
+    }
+
+    .stat-box .value {
+      font-size: 24px;
+      font-weight: 800;
+      color: var(--text);
+    }
+
+    .stat-box .label {
+      font-size: 11px;
+      color: var(--text-muted);
+      font-weight: 600;
+      text-transform: uppercase;
+    }
+
+    .stat-box.critical { border-left: 3px solid var(--color-critical); }
+    .stat-box.critical .value { color: var(--color-critical); }
+    .stat-box.high { border-left: 3px solid var(--color-high); }
+    .stat-box.high .value { color: var(--color-high); }
+    .stat-box.live { border-left: 3px solid var(--color-low); }
+    .stat-box.live .value { color: var(--color-low); }
+    .stat-box.blue { border-left: 3px solid var(--bsnl-blue); }
+    .stat-box.blue .value { color: var(--bsnl-blue); }
+
+    .gauge-container {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      margin-top: 16px;
+      gap: 24px;
+    }
+
+    .precision-gauge {
+      position: relative;
+      width: 100px;
+      height: 100px;
+    }
+
+    .precision-value {
+      position: absolute;
+      top: 50%;
+      left: 50%;
+      transform: translate(-50%, -50%);
+      font-size: 18px;
+      font-weight: 800;
+      color: var(--text);
+    }
+
+    /* ── Panel 2: Active Warnings (Top-Right) ── */
+    .warnings-list {
+      display: flex;
+      flex-direction: column;
+      gap: 12px;
+    }
+
+    .warning-card {
+      background: var(--surface-card);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: 16px;
+      display: flex;
+      flex-direction: column;
+      gap: 12px;
+      transition: all 0.2s;
+    }
+
+    .warning-card.IMMEDIATE { border-left: 4px solid var(--color-critical); }
+    .warning-card.MONITOR { border-left: 4px solid var(--color-high); }
+    .warning-card.INVESTIGATE { border-left: 4px solid var(--bsnl-blue); }
+
+    .warning-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+    }
+
+    .warning-node {
+      font-size: 15px;
+      font-weight: 700;
+      color: var(--text);
+    }
+
+    .warning-meta {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+
+    .urgency-badge {
+      font-size: 9px;
+      font-weight: 800;
+      padding: 2px 6px;
+      border-radius: 4px;
+      text-transform: uppercase;
+    }
+
+    .urgency-badge.IMMEDIATE { background-color: var(--bg-critical); color: var(--color-critical); }
+    .urgency-badge.MONITOR { background-color: var(--bg-high); color: var(--color-high); }
+    .urgency-badge.INVESTIGATE { background-color: rgba(0, 51, 153, 0.2); color: var(--bsnl-blue); }
+
+    .ttf-badge {
+      font-size: 11px;
+      font-weight: 600;
+      color: var(--color-critical);
+      background: rgba(239, 68, 68, 0.1);
+      padding: 2px 6px;
+      border-radius: 4px;
+    }
+
+    .forecast-box {
+      background: rgba(0,0,0,0.2);
+      border-radius: 6px;
+      padding: 8px 12px;
+      font-size: 12px;
+    }
+
+    .forecast-title {
+      font-weight: 700;
+      color: var(--text-muted);
+      margin-bottom: 4px;
+      font-size: 10px;
+      text-transform: uppercase;
+    }
+
+    .path-chips {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 6px;
+      margin-top: 6px;
+    }
+
+    .chip {
+      background: var(--border);
+      padding: 2px 8px;
+      border-radius: 12px;
+      font-size: 10px;
+      color: var(--text);
+    }
+
+    .chip.highlighted {
+      background-color: var(--bsnl-blue);
+      color: white;
+    }
+
+    /* LLM Summary Block */
+    .llm-summary-block {
+      border-top: 1px solid var(--border);
+      padding-top: 12px;
+      margin-top: 4px;
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+    }
+
+    .llm-header {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      font-size: 11px;
+      font-weight: 700;
+      color: var(--bsnl-orange);
+      text-transform: uppercase;
+    }
+
+    .llm-content {
+      font-size: 12px;
+      line-height: 1.5;
+    }
+
+    .llm-content strong {
+      color: var(--text-muted);
+      font-size: 11px;
+    }
+
+    /* Skeleton Loading State for LLM */
+    .skeleton-text {
+      height: 12px;
+      background: linear-gradient(90deg, #374151 25%, #4b5563 50%, #374151 75%);
+      background-size: 200% 100%;
+      animation: loading 1.5s infinite;
+      border-radius: 4px;
+      margin-bottom: 6px;
+    }
+
+    .skeleton-text.short { width: 40%; }
+    .skeleton-text.medium { width: 75%; }
+
+    @keyframes loading {
+      0% { background-position: 200% 0; }
+      100% { background-position: -200% 0; }
+    }
+
+    /* Feature Importance Bars */
+    .features-chart {
+      margin-top: 8px;
+    }
+
+    .feature-bar-row {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      margin-bottom: 4px;
+      font-size: 11px;
+    }
+
+    .feature-name {
+      width: 140px;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+      color: var(--text-muted);
+    }
+
+    .feature-bar-bg {
+      flex: 1;
+      height: 6px;
+      background-color: var(--border);
+      border-radius: 3px;
+      overflow: hidden;
+    }
+
+    .feature-bar-fill {
+      height: 100%;
+      background-color: var(--bsnl-orange);
+      border-radius: 3px;
+    }
+
+    /* ── Panel 3: Topology Graph (Bottom-Left) ── */
+    #topology-svg {
+      width: 100%;
+      height: 100%;
+      background-color: #0b0f19;
+    }
+
+    .node {
+      stroke: var(--border);
+      stroke-width: 1.5px;
+      cursor: pointer;
+    }
+
+    .link {
+      stroke: var(--border);
+      stroke-opacity: 0.6;
+    }
+
+    .link.down {
+      stroke: var(--color-critical);
+      stroke-dasharray: 4 4;
+      stroke-width: 2px;
+    }
+
+    .node-label {
+      font-size: 10px;
+      fill: var(--text);
+      pointer-events: none;
+      text-anchor: middle;
+      font-weight: 600;
+    }
+
+    /* ── Panel 4: Live Alarm Feed (Bottom-Right) ── */
+    .alarm-feed-container {
+      display: flex;
+      flex-direction: column;
+      height: 100%;
+    }
+
+    .feed-list {
+      flex: 1;
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+      overflow-y: auto;
+    }
+
+    .alarm-card {
+      background: var(--surface-card);
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      padding: 10px 14px;
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      cursor: pointer;
+      transition: background 0.15s;
+    }
+
+    .alarm-card:hover {
+      background: rgba(255,255,255,0.03);
+    }
+
+    .alarm-severity-icon {
+      font-size: 16px;
+      width: 24px;
+      height: 24px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      border-radius: 50%;
+    }
+
+    .alarm-severity-icon.CRITICAL { color: var(--color-critical); background: var(--bg-critical); }
+    .alarm-severity-icon.MAJOR { color: var(--color-high); background: var(--bg-high); }
+    .alarm-severity-icon.MINOR { color: var(--bsnl-blue); background: rgba(0,51,153,0.15); }
+    .alarm-severity-icon.WARNING { color: var(--color-medium); background: var(--bg-medium); }
+    .alarm-severity-icon.CLEARED { color: var(--color-low); background: var(--bg-low); }
+
+    .alarm-content {
+      display: flex;
+      flex-direction: column;
+      flex: 1;
+    }
+
+    .alarm-main {
+      font-size: 13px;
+      font-weight: 700;
+    }
+
+    .alarm-sub {
+      font-size: 11px;
+      color: var(--text-muted);
+      margin-top: 2px;
+    }
+
+    .alarm-badge-count {
+      background: var(--bsnl-orange);
+      color: white;
+      font-size: 10px;
+      font-weight: 800;
+      padding: 2px 6px;
+      border-radius: 10px;
+    }
+
+    .alarm-time {
+      font-size: 10px;
+      color: var(--text-muted);
+      white-space: nowrap;
+    }
+
+    /* Pagination Controls */
+    .pagination-bar {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      padding-top: 12px;
+      border-top: 1px solid var(--border);
+      margin-top: 12px;
+    }
+
+    .page-btn {
+      background: var(--surface-card);
+      border: 1px solid var(--border);
+      color: var(--text);
+      padding: 6px 12px;
+      border-radius: 4px;
+      cursor: pointer;
+      font-size: 11px;
+      font-weight: 600;
+      transition: all 0.2s;
+    }
+
+    .page-btn:hover:not(:disabled) {
+      background: var(--border);
+    }
+
+    .page-btn:disabled {
+      opacity: 0.4;
+      cursor: not-allowed;
+    }
+
+    .page-info {
+      font-size: 11px;
+      color: var(--text-muted);
+    }
+
+    /* ── Verification Ledger Panel (Full Width Bottom) ── */
+    .ledger-panel {
+      margin: 16px;
+      background-color: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: 16px;
+    }
+
+    .ledger-table-container {
+      overflow-x: auto;
+      margin-top: 12px;
+    }
+
+    .ledger-table {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 12px;
+      text-align: left;
+    }
+
+    .ledger-table th {
+      background: rgba(255,255,255,0.02);
+      border-bottom: 2px solid var(--border);
+      padding: 10px 12px;
+      font-weight: 700;
+      color: var(--text-muted);
+      text-transform: uppercase;
+      font-size: 10px;
+      letter-spacing: 0.5px;
+      cursor: pointer;
+    }
+
+    .ledger-table th:hover {
+      color: var(--text);
+    }
+
+    .ledger-table td {
+      border-bottom: 1px solid var(--border);
+      padding: 10px 12px;
+    }
+
+    .ledger-table tr.data-row:hover {
+      background: rgba(255,255,255,0.01);
+    }
+
+    .status-pill {
+      font-size: 10px;
+      font-weight: 800;
+      padding: 2px 8px;
+      border-radius: 12px;
+      text-transform: uppercase;
+      display: inline-block;
+    }
+
+    .status-pill.TRUE_POSITIVE { background-color: var(--bg-low); color: var(--color-low); }
+    .status-pill.FALSE_POSITIVE { background-color: var(--bg-critical); color: var(--color-critical); }
+    .status-pill.PENDING { background-color: var(--bg-medium); color: var(--color-medium); }
+
+    /* Expandable Row Styles */
+    .expand-trigger {
+      cursor: pointer;
+    }
+
+    .expandable-details {
+      background: rgba(0,0,0,0.25);
+    }
+
+    .ledger-details-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+      gap: 16px;
+      padding: 16px;
+    }
+
+    .ledger-details-section {
+      background: var(--surface-card);
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      padding: 12px;
+    }
+
+    .ledger-details-title {
+      font-size: 10px;
+      font-weight: 800;
+      text-transform: uppercase;
+      color: var(--bsnl-orange);
+      margin-bottom: 8px;
+    }
+
+    /* Transition Flow and Path Pills styles */
+    .transition-flow {
+      display: flex;
+      flex-direction: column;
+      gap: 12px;
+      margin-top: 4px;
+      padding: 6px 0;
+    }
+
+    .flow-path {
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+    }
+
+    .flow-label {
+      font-size: 9px;
+      font-weight: 800;
+      text-transform: uppercase;
+      color: var(--text-muted);
+      letter-spacing: 0.5px;
+    }
+
+    .flow-nodes {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      flex-wrap: wrap;
+    }
+
+    .flow-node {
+      font-size: 10px;
+      font-family: monospace;
+      padding: 4px 8px;
+      border-radius: 4px;
+      font-weight: bold;
+      border: 1px solid var(--border);
+      background: var(--surface-card);
+      color: var(--text);
+      white-space: nowrap;
+    }
+
+    .flow-node.trigger {
+      border-color: rgba(249, 115, 22, 0.4);
+      background: rgba(249, 115, 22, 0.08);
+      color: var(--bsnl-orange);
+    }
+
+    .flow-node.predicted {
+      border-color: rgba(21, 101, 192, 0.4);
+      background: rgba(21, 101, 192, 0.08);
+      color: var(--bsnl-blue);
+    }
+
+    .flow-node.actual {
+      border-color: rgba(46, 125, 50, 0.4);
+      background: rgba(46, 125, 50, 0.08);
+      color: var(--color-low);
+    }
+
+    .flow-edge-prob {
+      font-size: 9px;
+      font-weight: bold;
+      color: var(--text-muted);
+      display: flex;
+      align-items: center;
+      gap: 4px;
+    }
+
+    .flow-edge-prob::before {
+      content: '──';
+      color: var(--border);
+    }
+
+    .flow-edge-prob::after {
+      content: '──>';
+      color: var(--border);
+    }
+
+    .flow-edge-arrow {
+      color: var(--text-muted);
+      font-size: 10px;
+      margin: 0 2px;
+    }
+
+    .path-pill-small {
+      font-size: 9px;
+      font-family: monospace;
+      background: rgba(255,255,255,0.05);
+      border: 1px solid var(--border);
+      padding: 1px 5px;
+      border-radius: 3px;
+      color: var(--text);
+    }
+
+    /* Modal / Sidebar Drawer */
+    .drawer {
+      position: fixed;
+      top: 0;
+      right: -400px;
+      width: 400px;
+      height: 100vh;
+      background-color: var(--surface);
+      border-left: 2px solid var(--bsnl-blue);
+      box-shadow: -10px 0 30px rgba(0,0,0,0.5);
+      z-index: 1000;
+      transition: right 0.3s ease;
+      display: flex;
+      flex-direction: column;
+    }
+
+    .drawer.open {
+      right: 0;
+    }
+
+    .drawer-header {
+      padding: 16px;
+      border-bottom: 1px solid var(--border);
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      background: rgba(255,255,255,0.02);
+    }
+
+    .drawer-close {
+      background: transparent;
       border: none;
+      color: var(--text-muted);
+      cursor: pointer;
+      font-size: 20px;
     }
-  }
-</style>
+
+    .drawer-body {
+      padding: 20px;
+      flex: 1;
+      overflow-y: auto;
+      display: flex;
+      flex-direction: column;
+      gap: 16px;
+    }
+
+    .service-impact-list {
+      display: grid;
+      grid-template-columns: repeat(2, 1fr);
+      gap: 8px;
+    }
+
+    .service-card {
+      background: var(--surface-card);
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      padding: 10px;
+      text-align: center;
+    }
+
+    .service-card .num {
+      font-size: 18px;
+      font-weight: 800;
+      color: var(--bsnl-orange);
+    }
+
+    .service-card .lbl {
+      font-size: 10px;
+      color: var(--text-muted);
+      font-weight: 600;
+    }
+
+    /* Toast Container */
+    #toast-container {
+      position: fixed;
+      top: 20px;
+      right: 20px;
+      z-index: 99999;
+      display: flex;
+      flex-direction: column;
+      gap: 12px;
+      pointer-events: none;
+      max-width: 400px;
+      width: calc(100vw - 40px);
+    }
+    .toast {
+      background: rgba(17, 24, 39, 0.95);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: 14px 16px;
+      pointer-events: auto;
+      box-shadow: 0 10px 30px rgba(0, 0, 0, 0.5);
+      animation: toastSlideIn 0.3s ease-out forwards;
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+    }
+    .toast.CRITICAL { border-left: 4px solid var(--color-critical); }
+    .toast.HIGH { border-left: 4px solid var(--color-high); }
+    
+    @keyframes toastSlideIn {
+      from { transform: translateX(120%); opacity: 0; }
+      to { transform: translateX(0); opacity: 1; }
+    }
+  </style>
 </head>
 <body>
 
-<div id="toast-container"></div>
-
-<header>
-  <h1>AlarmIQ <span>Telecom Node Failure Risk — Strictly for Diagnosis</span></h1>
-  <div id="conn-status">
-    <div id="conn-dot"></div>
-    <span id="conn-label">Connecting…</span>
-  </div>
-</header>
-
-<div id="stats">
-  <div class="stat-card info">  <div class="val" id="s-total">—</div>   <div class="lbl">Nodes Tracked</div></div>
-  <div class="stat-card critical"><div class="val" id="s-crit">—</div>    <div class="lbl">Critical Risk</div></div>
-  <div class="stat-card high">   <div class="val" id="s-high">—</div>    <div class="lbl">High Risk</div></div>
-  <div class="stat-card medium"> <div class="val" id="s-med">—</div>     <div class="lbl">Medium Risk</div></div>
-  <div class="stat-card low">    <div class="val" id="s-low">—</div>     <div class="lbl">Low / Safe</div></div>
-  <div class="stat-card info">   <div class="val" id="s-auc">—</div>     <div class="lbl">Model ROC-AUC</div></div>
-  <div class="stat-card info">   <div class="val" id="s-model">—</div>   <div class="lbl">Model</div></div>
-</div>
-
-<!-- Beautiful glassmorphic dataset timeline bar -->
-<div id="dataset-timeline-bar" style="background: rgba(88, 166, 255, 0.04); border-bottom: 1px solid var(--border); padding: 8px 24px; display: flex; justify-content: space-between; align-items: center; font-size: 12px; color: var(--muted); flex-wrap: wrap; gap: 8px;">
-  <div style="display: flex; align-items: center; gap: 6px;">
-    <span>📅</span>
-    <strong>Dataset Timeline:</strong>
-    <span id="ds-start" style="color: var(--text); font-family: monospace;">—</span>
-    <span style="color: var(--accent);">➜</span>
-    <span id="ds-end" style="color: var(--text); font-family: monospace;">—</span>
-  </div>
-  <div style="display: flex; align-items: center; gap: 6px;">
-    <span>⏱️</span>
-    <strong>Duration:</strong>
-    <span id="ds-duration" style="color: var(--accent); font-weight: 600;">—</span>
-  </div>
-</div>
-
-<div id="sandbox">
-  <div class="sandbox-title">🛠 Interactive Prediction Sandbox</div>
-  <div class="sandbox-controls">
-    <div class="control-group" style="display: flex; align-items: center; justify-content: center; width: 100%; gap: 16px;">
-      <span class="ctrl-lbl">Node Outage Simulator:</span>
-      <button class="btn accent-btn" id="play-sim-btn" style="background:#238636;border-color:#2ea44f;color:#fff;" onclick="startFullSimulation()" disabled>▶ Play Simulation (All Alarms)</button>
-      <button class="btn clear-btn" id="play-scenario-btn" onclick="startScenario()" disabled>▶ Play Gradual Scenario (Demo)</button>
-      
-      <!-- Simulation Clock in Center -->
-      <div id="sim-clock" style="font-family: monospace; font-size: 11px; font-weight: 700; color: var(--muted); background: var(--surface); padding: 5px 10px; border: 1px solid var(--border); border-radius: 6px; display: flex; align-items: center; gap: 6px; min-width: 155px; justify-content: center; transition: all 0.3s ease;">
-        📅 <span id="sim-clock-val">SYSTEM IDLE</span>
+  <!-- ── BSNL HEADER ── -->
+  <header>
+    <div class="brand-container">
+      <img class="brand-logo" src="/public/logo.png" alt="BSNL Logo" />
+      <div class="brand-text">
+        <h1>Alarm<span class="highlight">IQ</span></h1>
+        <p>Predictive Operations Dashboard</p>
       </div>
-
-      <button class="btn clear-btn" onclick="resetPredictor()">↺ Reset Sandbox</button>
-      
-      <span class="ctrl-lbl" style="margin-left: 8px;">Speed:</span>
-      <select id="sim-speed-select" onchange="changeSpeed(this.value)" style="font-size: 11px; padding: 5px 8px; border-radius: 6px; background: var(--surface); color: var(--text); border: 1px solid var(--border); outline: none; cursor: pointer;">
-        <option value="1000">Ultra Slow (1/s) — Detailed Analysis</option>
-        <option value="150" selected>Slow (6/s) — Human Readable</option>
-        <option value="50">Medium (20/s) — Smooth Analysis</option>
-        <option value="5">Fast (200/s) — Quick Replay</option>
-        <option value="0">Hyper (Max) — Background Replay</option>
-      </select>
     </div>
 
-    <!-- Test Split Selector Row -->
-    <div style="width: 100%; height: 1px; background: var(--border); margin: 4px 0;"></div>
-    <div class="control-group" id="split-row" style="display: flex; align-items: center; justify-content: center; width: 100%; gap: 10px; flex-wrap: wrap;">
-      <span class="ctrl-lbl">🔬 Test Data Split:</span>
-      <select id="split-select" style="font-size: 11px; padding: 5px 8px; border-radius: 6px; background: var(--surface); color: var(--text); border: 1px solid var(--border); outline: none; cursor: pointer;">
-        <option value="0.90">90% Test — Train on first 10%</option>
-        <option value="0.80">80% Test — Train on first 20%</option>
-        <option value="0.70">70% Test — Train on first 30%</option>
-        <option value="0.60">60% Test — Train on first 40%</option>
-        <option value="0.50">50% Test — Train on first 50%</option>
-        <option value="0.20" selected>20% Test — Train on first 80%</option>
-      </select>
-      <button class="btn" id="apply-split-btn" onclick="applyTestSplit()" style="background:#6e40c9;border-color:#8957e5;color:#fff;font-size:11px;">⚙ Apply &amp; Retrain</button>
-      <span id="split-status" style="font-size: 11px; color: var(--medium); font-weight: bold;">💡 Please select a test split and click Apply &amp; Retrain to unlock the simulation.</span>
+    <div class="header-controls">
+      <div class="status-indicator">
+        <span id="socket-status-dot" class="status-dot"></span>
+        <span id="socket-status-text">Disconnected</span>
+      </div>
     </div>
+  </header>
 
-    <!-- Custom Telemetry Upload Row -->
-    <div style="width: 100%; height: 1px; background: var(--border); margin: 4px 0;"></div>
-    <div class="control-group" id="upload-row" style="display: flex; align-items: center; justify-content: center; width: 100%; gap: 10px; flex-wrap: wrap;">
-      <span class="ctrl-lbl">📂 Upload Custom Telemetry JSON (Optional):</span>
-      <input type="file" id="custom-data-upload" accept=".json" style="font-size: 11px; max-width: 250px; color: var(--muted); cursor: pointer;" onchange="handleCustomDataUpload(event)">
-      <span id="upload-status" style="font-size: 11px; color: var(--muted); font-weight: normal;">No custom data uploaded (falls back to default historical alarms).</span>
-    </div>
-
-    <!-- Row Separator -->
-    <div style="width: 100%; height: 1px; background: var(--border); margin: 4px 0;"></div>
-
-    <div class="control-group" style="display: flex; align-items: center; justify-content: center; width: 100%; gap: 8px;">
-      <span class="ctrl-lbl">Manual Alarm Injector:</span>
-      <select id="sandbox-node">
-        <option value="demo-node-01">demo-node-01 (Sandbox Target)</option>
-        <option value="host-er2-router-03">host-er2-router-03 (Historical Outage Node)</option>
-        <option value="host-er2-router-02">host-er2-router-02 (Historical Node)</option>
-      </select>
-      <button class="btn inject-btn minor" onclick="injectAlarm('LINK_DOWN', 'MINOR', 'Interface')">+ Link Down (Minor)</button>
-      <button class="btn inject-btn major" onclick="injectAlarm('LINK_DOWN', 'MAJOR', 'Interface')">+ Link Down (Major)</button>
-      <button class="btn inject-btn critical" onclick="injectAlarm('BGP-5-ADJCHANGE_DOWN', 'CRITICAL', 'Routing')">+ BGP Down (Critical)</button>
-      <button class="btn inject-btn critical" onclick="injectAlarm('cefcPowerStatusChange', 'CRITICAL', 'Power')">+ Power Change (Critical)</button>
-      <button class="btn inject-btn critical" onclick="injectAlarm('cefcFRURemoved', 'CRITICAL', 'Hardware')">+ FRU Removed (Critical)</button>
-    </div>
-  </div>
-</div>
-
-<div id="sim-bar-wrap">
-  <span id="sim-label">🟢 System Ready — press ▶ Play Simulation to begin</span>
-  <div id="sim-bar"><div id="sim-bar-fill" style="width:0%;background:var(--accent);"></div></div>
-  <span id="sim-pct">0%</span>
-</div>
-
-<div id="main">
-  <div id="node-panel">
-    <h2>Node Risk Map <span id="node-count" style="color:var(--accent)"></span></h2>
-    <div id="node-grid"></div>
-  </div>
-
-  <div id="sidebar">
-    <div id="warnings-panel">
-      <h2>⚠ Active Diagnostics (Forecasts Only)</h2>
-      <div id="warnings-list"><div id="no-warnings">No warnings yet</div></div>
-    </div>
-    <div id="feed-panel">
-      <h2>Live Alarm Feed</h2>
-      <div id="alarm-feed"></div>
-    </div>
-  </div>
-</div>
-
-<!-- ═══════════════════════════════════════════════════════════════════
-     PREDICTION VERIFICATION LEDGER — Full Detail Panel
-══════════════════════════════════════════════════════════════════════ -->
-<div id="ledger-panel">
-  <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:12px;margin-bottom:14px;">
-    <div>
-      <h2 style="font-size:15px;font-weight:800;color:var(--accent);margin:0;">📊 Prediction Verification Ledger</h2>
-      <p style="font-size:11px;color:var(--muted);margin:3px 0 0;">Every prediction the model made — verified against what actually happened in the simulation</p>
-    </div>
-    <button onclick="clearLedgerView()" style="font-size:10px;padding:4px 12px;border-radius:6px;background:transparent;border:1px solid var(--border);color:var(--muted);cursor:pointer;">Clear View</button>
-  </div>
-
-  <!-- Scorecard row -->
-  <div id="ledger-metrics">
-    <div class="lm-card prec">
-      <div class="prec-gauge">
-        <div class="prec-ring">
-          <svg width="38" height="38" viewBox="0 0 38 38">
-            <circle cx="19" cy="19" r="15" fill="none" stroke="#21262d" stroke-width="4"/>
-            <circle id="prec-ring-arc" cx="19" cy="19" r="15" fill="none" stroke="#58a6ff" stroke-width="4"
-                    stroke-dasharray="0 94.25" stroke-linecap="round"/>
-          </svg>
-          <div class="prec-ring-val" id="lm-precision">—</div>
+  <!-- ── INTERACTIVE PREDICTION SANDBOX ── -->
+  <div id="sandbox">
+    <div class="sandbox-title">🛠 Interactive Prediction Sandbox</div>
+    <div class="sandbox-controls">
+      <!-- Row 1: Simulator Controls -->
+      <div class="control-row">
+        <span class="ctrl-lbl">Outage Simulator:</span>
+        <button class="btn green-btn" id="play-sim-btn" onclick="startFullSimulation()"><i class="fa fa-play"></i> Play Simulation (All Alarms)</button>
+        <button class="btn accent-btn" id="play-scenario-btn" onclick="startScenario()"><i class="fa fa-route"></i> Play Gradual Scenario (Demo)</button>
+        <button class="btn" onclick="resetPredictor()"><i class="fa fa-rotate-left"></i> Reset Sandbox</button>
+        
+        <div id="sim-clock" style="font-family: monospace; font-size: 11px; font-weight: 700; color: var(--text-muted); background: var(--surface-card); padding: 5px 10px; border: 1px solid var(--border); border-radius: 6px; display: flex; align-items: center; gap: 6px; min-width: 155px; justify-content: center;">
+          📅 <span id="sim-clock-val">SYSTEM IDLE</span>
         </div>
-        <div>
-          <div style="font-size:10px;font-weight:700;color:var(--accent);">Precision</div>
-          <div style="font-size:9px;color:var(--muted);">TP/(TP+FP)</div>
-        </div>
+
+        <span class="ctrl-lbl">Speed:</span>
+        <select id="sim-speed-select" onchange="changeSpeed(this.value)">
+          <option value="1000">Ultra Slow (1/s)</option>
+          <option value="150" selected>Slow (6/s)</option>
+          <option value="50">Medium (20/s)</option>
+          <option value="5">Fast (200/s)</option>
+          <option value="0">Hyper (Max)</option>
+        </select>
       </div>
-    </div>
-    <div class="lm-card tp">
-      <div class="lm-val" id="lm-tp" style="color:var(--low);">0</div>
-      <div class="lm-lbl">True Positives ✅</div>
-      <div style="font-size:9px;color:var(--muted);margin-top:2px;">Failure happened</div>
-    </div>
-    <div class="lm-card fp">
-      <div class="lm-val" id="lm-fp" style="color:var(--critical);">0</div>
-      <div class="lm-lbl">False Positives ❌</div>
-      <div style="font-size:9px;color:var(--muted);margin-top:2px;">No failure in 2h</div>
-    </div>
-    <div class="lm-card pen">
-      <div class="lm-val" id="lm-pend" style="color:var(--medium);">0</div>
-      <div class="lm-lbl">Pending ⏳</div>
-      <div style="font-size:9px;color:var(--muted);margin-top:2px;">Within 2h horizon</div>
-    </div>
-    <div class="lm-card">
-      <div class="lm-val" id="lm-total">0</div>
-      <div class="lm-lbl">Total Predictions</div>
-      <div style="font-size:9px;color:var(--muted);margin-top:2px;">All time</div>
-    </div>
-    <div class="lm-card" style="border-left:3px solid var(--high);">
-      <div class="lm-val" id="lm-avg-elapsed">—</div>
-      <div class="lm-lbl">Avg Time to Verify</div>
-      <div style="font-size:9px;color:var(--muted);margin-top:2px;">Minutes</div>
+
+      <!-- Row 2: Test Split Selector -->
+      <div style="width: 100%; height: 1px; background: var(--border);"></div>
+      <div class="control-row">
+        <span class="ctrl-lbl">🔬 Test Data Split:</span>
+        <select id="split-select">
+          <option value="0.90">90% Test — Train on first 10%</option>
+          <option value="0.80">80% Test — Train on first 20%</option>
+          <option value="0.70">70% Test — Train on first 30%</option>
+          <option value="0.60">60% Test — Train on first 40%</option>
+          <option value="0.50">50% Test — Train on first 50%</option>
+          <option value="0.20" selected>20% Test — Train on first 80%</option>
+        </select>
+        <button class="btn" id="apply-split-btn" onclick="applyTestSplit()"><i class="fa fa-gears"></i> Apply & Retrain</button>
+        <span id="split-status" style="font-size: 11px; color: var(--color-medium); font-weight: bold;">💡 Please select a test split and click Apply & Retrain to unlock the simulation.</span>
+      </div>
+
+      <!-- Row 3: Custom Telemetry Upload -->
+      <div style="width: 100%; height: 1px; background: var(--border);"></div>
+      <div class="control-row">
+        <span class="ctrl-lbl">📂 Upload Custom Telemetry JSON (Optional):</span>
+        <input type="file" id="custom-data-upload" accept=".json" onchange="handleCustomDataUpload(event)">
+        <span id="upload-status" style="font-size: 11px; color: var(--text-muted);">No custom data uploaded (falls back to default historical alarms).</span>
+      </div>
+
+      <!-- Row 4: Manual Alarm Injector -->
+      <div style="width: 100%; height: 1px; background: var(--border);"></div>
+      <div class="control-row">
+        <span class="ctrl-lbl">Manual Alarm Injector:</span>
+        <select id="sandbox-node">
+          <option value="demo-node-01">demo-node-01 (Sandbox Target)</option>
+          <option value="host-er2-router-03">host-er2-router-03 (Historical Outage Node)</option>
+          <option value="host-er2-router-02">host-er2-router-02 (Historical Node)</option>
+        </select>
+        <button class="btn inject-btn minor" onclick="injectAlarm('LINK_DOWN', 'MINOR', 'Interface')">+ Link Down (Minor)</button>
+        <button class="btn inject-btn major" onclick="injectAlarm('LINK_DOWN', 'MAJOR', 'Interface')">+ Link Down (Major)</button>
+        <button class="btn inject-btn critical" onclick="injectAlarm('BGP-5-ADJCHANGE_DOWN', 'CRITICAL', 'Routing')">+ BGP Down (Critical)</button>
+        <button class="btn inject-btn critical" onclick="injectAlarm('cefcPowerStatusChange', 'CRITICAL', 'Power')">+ Power Change (Critical)</button>
+        <button class="btn inject-btn critical" onclick="injectAlarm('cefcFRURemoved', 'CRITICAL', 'Hardware')">+ FRU Removed (Critical)</button>
+      </div>
     </div>
   </div>
 
-  <!-- Filter tabs -->
-  <div class="ledger-tabs">
-    <div class="ltab active" onclick="setLedgerFilter('all', this)">All</div>
-    <div class="ltab" onclick="setLedgerFilter('pending', this)">⏳ Pending</div>
-    <div class="ltab" onclick="setLedgerFilter('tp', this)">✅ True Positives</div>
-    <div class="ltab" onclick="setLedgerFilter('fp', this)">❌ False Positives</div>
-  </div>
-
-  <!-- Full table -->
-  <div id="ledger-table-wrap">
-    <table id="ledger-table">
-      <thead><tr>
-        <th onclick="sortLedger('node')">Node ↕</th>
-        <th onclick="sortLedger('predicted_at')">Predicted At ↕</th>
-        <th onclick="sortLedger('risk_score')">Risk Score ↕</th>
-        <th>Level</th>
-        <th>Status</th>
-        <th>TTF Estimate</th>
-        <th>Window Alarms</th>
-        <th>Last Condition</th>
-        <th onclick="sortLedger('elapsed_mins')">Elapsed ↕</th>
-        <th>Resolved At</th>
-        <th style="width:24px;"></th>
-      </tr></thead>
-      <tbody id="ledger-body">
-        <tr><td colspan="11" class="ledger-empty">
-          <div class="ledger-empty-icon">🔮</div>
-          <strong>No predictions yet</strong>
-          <p>Start the simulation — predictions appear here as the model detects high-risk nodes.</p>
-        </td></tr>
-      </tbody>
-    </table>
-  </div>
-  <div style="margin-top:8px;font-size:10px;color:var(--muted);">💡 Click any row to expand feature details &nbsp;·&nbsp; Predictions resolve as ✅ True Positive when ≥3 CRITICAL alarms occur within 30 min · ❌ False Positive if 2h horizon expires with no failure</div>
-</div>
-
-<script>
-const SEV_ORDER = { CRITICAL: 0, MAJOR: 1, WARNING: 2, MINOR: 3, CLEARED: 4 };
-
-function sev(s) {
-  return { CRITICAL: 'var(--critical)', MAJOR: 'var(--high)', WARNING: 'var(--medium)',
-           MINOR: 'var(--accent)', CLEARED: 'var(--cleared)' }[s] || 'var(--muted)';
-}
-
-function shortNode(n) {
-  return n.replace(/\.my-cisco\.net\.in$/, '').replace(/\.my-cisco\.net$/, '');
-}
-
-function formatFeatVal(featName, val) {
-  if (featName === 'minutes_since_last_critical') {
-    if (val >= 9999.0) return 'N/A';
-    return val.toFixed(1) + 'm';
-  }
-  return val;
-}
-
-function formatETA(scoredAtStr, estimatedTtfStr) {
-  if (!estimatedTtfStr || estimatedTtfStr === 'Stable') {
-    return 'Stable';
-  }
-  const match = estimatedTtfStr.match(/\d+/);
-  if (!match) return 'Stable';
-  const minutes = parseInt(match[0], 10);
-  try {
-    const baseDate = new Date(scoredAtStr);
-    if (isNaN(baseDate.getTime())) return 'N/A';
-    const etaDate = new Date(baseDate.getTime() + minutes * 60 * 1000);
-    return etaDate.toLocaleTimeString('en-GB', { hour12: false });
-  } catch (e) {
-    return 'N/A';
-  }
-}
-
-function renderNodes(nodes) {
-  const grid = document.getElementById('node-grid');
-  document.getElementById('node-count').textContent = `(${nodes.length} nodes)`;
-
-  // Sort: CRITICAL > HIGH > MEDIUM > LOW, then by score desc
-  nodes.sort((a, b) => {
-    const lvlOrder = { CRITICAL: 0, HIGH: 1, MEDIUM: 2, LOW: 3 };
-    const d = (lvlOrder[a.risk_level] ?? 4) - (lvlOrder[b.risk_level] ?? 4);
-    return d !== 0 ? d : b.risk_score - a.risk_score;
-  });
-
-  grid.innerHTML = nodes.map(n => {
-    const pct  = Math.round(n.risk_score * 100);
-    const feats = (n.top_features || []).filter(f => f.value > 0).slice(0, 3);
-    const featHtml = feats.map(f => {
-      const name = f.feature.replace(/_count$/, '').replace(/_/g,' ');
-      const val  = formatFeatVal(f.feature, f.value);
-      return `<div class="feat-row"><span class="feat-name">${name}</span>
-              <span class="feat-val">${val}</span></div>`;
-    }).join('');
-
-    const eta = formatETA(n.scored_at, n.estimated_ttf);
-    const currentAlarm = n.last_alarm_condition || 'None';
-    const nextAlarm = n.predicted_next_alarm || 'None';
-    const nextProb = n.predicted_next_alarm_prob ? (n.predicted_next_alarm_prob * 100).toFixed(0) : '0';
-
-    const actualStagesHtml = (n.actual_stages && n.actual_stages.length > 0)
-      ? n.actual_stages.map((cond, idx) => {
-          const isLast = idx === n.actual_stages.length - 1;
-          return `<span style="color:${isLast ? 'var(--text)' : 'var(--muted)'}; font-weight:${isLast ? 'bold' : 'normal'}">${cond}</span>`;
-        }).join(' ➜ ')
-      : `<span>None</span>`;
-
-    const predictedStagesHtml = (n.predicted_stages && n.predicted_stages.length > 0)
-      ? n.predicted_stages.map(s => `<span>${s.condition} <span style="font-size:8px;opacity:0.8;color:var(--muted);">(${Math.round(s.prob*100)}%)</span></span>`).join(' ➜ ')
-      : `<span>None</span>`;
-
-    const alarmStatesHtml = `
-      <div class="node-meta" style="margin-top: 4px; padding-top: 4px; border-top: 1px dashed var(--border); font-size: 10px; display: flex; flex-direction: column; gap: 3px;">
-        <div style="display: flex; flex-direction: column; width: 100%;">
-          <span style="color:var(--muted);margin-bottom:1px;">Actual Stages (2h):</span>
-          <div style="font-family:monospace;font-size:9px;line-height:1.35;word-break:break-all;color:var(--text)">${actualStagesHtml}</div>
-        </div>
-        ${n.predicted_stages && n.predicted_stages.length > 0 ? `
-        <div style="display: flex; flex-direction: column; width: 100%;">
-          <span style="color:var(--muted);margin-bottom:1px;">Forecast Stages:</span>
-          <div style="font-family:monospace;font-size:9px;line-height:1.35;word-break:break-all;color:var(--accent)">
-            ${predictedStagesHtml}
-          </div>
-        </div>` : ''}
-      </div>
-    `;
-
-    return `<div class="node-card ${n.risk_level}">
-      <div class="top">
-        <div class="node-name" title="${n.node}">${shortNode(n.node)}</div>
-        <div class="risk-badge">${n.risk_level}</div>
-      </div>
-      <div class="score-bar-wrap"><div class="score-bar-fill" style="width:${pct}%"></div></div>
-      <div class="node-meta">
-        <span>Risk: <b>${(n.risk_score * 100).toFixed(1)}%</b></span>
-        <span>TTF: <b class="ttf-label ${n.risk_level}">${n.estimated_ttf || 'Stable'}</b></span>
-      </div>
-      <div class="node-meta" style="margin-top: 2px;">
-        <span>ETA: <b style="color:var(--text)">${eta}</b></span>
-        <span>${n.window_alarms} alarms (2h)</span>
-      </div>
-      ${alarmStatesHtml}
-      ${feats.length ? `<div class="node-features">${featHtml}</div>` : ''}
-    </div>`;
-  }).join('');
-}
-
-function generateDiagnosticMessage(w, eta) {
-  const nodeName = shortNode(w.node);
-  const minutes = w.estimated_ttf || 'Stable';
-  
-  if (minutes === 'Stable') {
-    return `Node ${nodeName} is operating within stable parameters.`;
-  }
-  
-  const nextAlarm = w.predicted_next_alarm || "None";
-  const prob = w.predicted_next_alarm_prob ? Math.round(w.predicted_next_alarm_prob * 100) : 0;
-  const lastCond = w.last_alarm_condition || "None";
-  
-  if (nextAlarm === "None" || nextAlarm === "UNKNOWN") {
-    return `<span style="color:var(--muted)">Sequence forecast is unavailable for Node <strong>${nodeName}</strong> due to empty telemetry history.</span>`;
-  }
-
-  const actualStagesHtml = (w.actual_stages && w.actual_stages.length > 0)
-    ? w.actual_stages.map(cond => `<code style="background:#21262d;padding:1px 5px;border-radius:3px;">${cond}</code>`).join(' ➜ ')
-    : `<code>${lastCond}</code>`;
-
-  const predictedStagesHtml = (w.predicted_stages && w.predicted_stages.length > 0)
-    ? w.predicted_stages.map(s => `<code style="background:#21262d;padding:1px 5px;border-radius:3px;color:var(--accent)">${s.condition} (${Math.round(s.prob*100)}%)</code>`).join(' ➜ ')
-    : `<code>${nextAlarm} (${prob}%)</code>`;
-  
-  const topo = w.topology_correlation;
-  const topoText = (topo && topo.correlated)
-    ? `<div style="margin-top: 8px; padding-top: 6px; border-top: 1px dashed rgba(255,255,255,0.08); font-size: 11px; color: var(--high); line-height: 1.45;">
-         🔗 <strong>Topology Correlation:</strong> Neighbor node <strong>${shortNode(topo.root_cause_node)}</strong> is currently down (<strong>${topo.neighbor_level}</strong> outage). This is the highly probable root cause of adjacent BGP/Link losses on this node.
-       </div>`
-    : '';
-  
-  return `
-    <span style="display:block;margin-bottom:6px;font-size:12px;line-height:1.4;">⚠️ Imminent Event: Node <strong>${nodeName}</strong> is predicted to transition through multiple stages with high risk.</span>
-    <div style="margin-top: 8px; font-size: 11px; color: var(--muted); border-top: 1px solid rgba(255,255,255,0.08); padding-top: 6px; line-height: 1.45;">
-      <strong style="display:block;margin-bottom:4px;color:var(--text)">Sequence Forecast Details:</strong>
-      • Imminent Forecasted Alarm: <strong style="color:var(--accent)">${nextAlarm}</strong><br/>
-      • Sequence Probability: <strong style="color:var(--accent)">${prob}%</strong><br/>
-      • Current Actual Stages: ${actualStagesHtml}<br/>
-      • Predicted Future Stages: <code>${lastCond}</code> ➜ ${predictedStagesHtml}<br/>
-      • Predicted Time to Breach: <strong>in ${minutes}</strong> (ETA: <strong>${eta}</strong>)<br/>
-      • Network Failure Risk Level: <strong class="ttf-label ${w.risk_level}">${w.risk_level} (${(w.risk_score * 100).toFixed(0)}%)</strong>
-    </div>
-    ${topoText}
-  `;
-}
-
-const notifiedState = {};
-let initialLoadDone = false;
-
-function checkAndTriggerToasts(warnings) {
-  const currentWarnings = {};
-  
-  for (const w of warnings) {
-    const node = w.node;
-    const lvl = w.risk_level;
-    currentWarnings[node] = lvl;
+  <!-- ── 4-PANEL DASHBOARD GRID ── -->
+  <div class="dashboard-grid">
     
-    if (lvl === 'HIGH' || lvl === 'CRITICAL') {
-      const prevLvl = notifiedState[node];
-      if (prevLvl !== lvl) {
-        // Trigger toast only if it's a new transition or escalation
-        if (initialLoadDone) {
-          showDiagnosticToast(w);
-        }
-        notifiedState[node] = lvl;
-      }
-    } else {
-      delete notifiedState[node];
-    }
-  }
-  
-  // Clean up notifiedState for nodes that are no longer in warnings
-  for (const node in notifiedState) {
-    if (!currentWarnings[node]) {
-      delete notifiedState[node];
-    }
-  }
-  
-  initialLoadDone = true;
-}
+    <!-- Panel 1: Network Health Summary (Top-Left) -->
+    <div class="panel" style="height: 380px;">
+      <div class="panel-header">
+        <div class="panel-title"><i class="fa fa-heartbeat"></i> Network Health Summary</div>
+      </div>
+      <div class="panel-body">
+        <div class="health-stats">
+          <div class="stat-box blue">
+            <span id="stat-total-nodes" class="value">0</span>
+            <span class="label">Total Nodes</span>
+          </div>
+          <div class="stat-box critical">
+            <span id="stat-crit-count" class="value">0</span>
+            <span class="label">Critical Risks</span>
+          </div>
+          <div class="stat-box high">
+            <span id="stat-high-count" class="value">0</span>
+            <span class="label">High Risks</span>
+          </div>
+          <div class="stat-box live">
+            <span id="stat-alarms-rate" class="value">0.0</span>
+            <span class="label">Alarms / Min</span>
+          </div>
+        </div>
 
-function showDiagnosticToast(w) {
-  const container = document.getElementById('toast-container');
-  if (!container) return;
-  
-  const eta = formatETA(w.scored_at, w.estimated_ttf);
-  const diagnosticMsg = generateDiagnosticMessage(w, eta);
-  
-  const toast = document.createElement('div');
-  toast.className = `toast ${w.risk_level}`;
-  
-  const nextAlarm = w.predicted_next_alarm || "UNKNOWN";
-  
-  toast.innerHTML = `
-    <div class="toast-header">
-      <span class="toast-title">🔮 FORECAST (STRICTLY FOR DIAGNOSIS): ${nextAlarm} IMMINENT</span>
-      <button class="toast-close" onclick="dismissToast(this)">&times;</button>
+        <div class="gauge-container">
+          <div class="precision-gauge">
+            <svg viewBox="0 0 100 100" style="transform: rotate(-90deg);">
+              <circle cx="50" cy="50" r="40" fill="none" stroke="var(--border)" stroke-width="8"></circle>
+              <circle id="gauge-circle" cx="50" cy="50" r="40" fill="none" stroke="var(--color-low)" stroke-width="8" stroke-dasharray="251.2" stroke-dashoffset="251.2"></circle>
+            </svg>
+            <div id="gauge-val" class="precision-value">0.0%</div>
+          </div>
+          <div style="font-size: 13px; display: flex; flex-direction: column; gap: 4px;">
+            <div><strong>Verification Ledger Precision</strong></div>
+            <div class="text-muted" style="font-size: 11px;">Calculated live as True Positives / (TP + FP)</div>
+            <div class="text-muted" style="font-size: 11px;">TP: <span id="stat-tp" style="color: var(--color-low); font-weight: bold;">0</span> | FP: <span id="stat-fp" style="color: var(--color-critical); font-weight: bold;">0</span></div>
+          </div>
+        </div>
+      </div>
     </div>
-    <div class="toast-body">
-      ${diagnosticMsg}
+
+    <!-- Panel 2: Active Warnings (Top-Right) -->
+    <div class="panel" style="height: 380px;">
+      <div class="panel-header">
+        <div class="panel-title"><i class="fa fa-exclamation-triangle"></i> Active Risk Warnings</div>
+      </div>
+      <div class="panel-body" id="warnings-body">
+        <div id="no-active-warnings" style="color: var(--text-muted); font-size: 13px; text-align: center; margin-top: 40px;">
+          No active HIGH or CRITICAL risk nodes detected.
+        </div>
+        <div class="warnings-list" id="warnings-container">
+          <!-- Active warning cards dynamically inserted here -->
+        </div>
+      </div>
     </div>
-  `;
-  
-  container.appendChild(toast);
-  
-  // Auto dismiss after 10 seconds to allow review of diagnostics
-  setTimeout(() => {
-    if (toast.parentNode) {
-      toast.classList.add('slide-out');
-      toast.addEventListener('animationend', () => {
-        if (toast.parentNode) {
-          toast.remove();
-        }
+
+    <!-- Panel 3: Network Topology (Bottom-Left) -->
+    <div class="panel" style="grid-row: span 1; height: 350px;">
+      <div class="panel-header">
+        <div class="panel-title"><i class="fa fa-network-wired"></i> Topology Risk Graph</div>
+        <div style="display:flex;align-items:center;gap:10px;font-size:10px;">
+          <span style="display:flex;align-items:center;gap:4px;"><span style="width:10px;height:10px;border-radius:50%;background:var(--color-critical);display:inline-block"></span>Critical</span>
+          <span style="display:flex;align-items:center;gap:4px;"><span style="width:10px;height:10px;border-radius:50%;background:var(--color-high);display:inline-block"></span>High</span>
+          <span style="display:flex;align-items:center;gap:4px;"><span style="width:10px;height:10px;border-radius:50%;background:var(--color-medium);display:inline-block"></span>Medium</span>
+          <span style="display:flex;align-items:center;gap:4px;"><span style="width:10px;height:10px;border-radius:50%;background:var(--color-low);display:inline-block"></span>Low</span>
+          <span style="color:var(--text-muted);">· Drag nodes · Scroll to zoom · Dbl-click to reset</span>
+        </div>
+      </div>
+      <div class="panel-body" style="padding: 0; position: relative;">
+        <svg id="topology-svg"></svg>
+      </div>
+    </div>
+
+    <!-- Panel 4: Live Alarm Feed (Bottom-Right) -->
+    <div class="panel" style="grid-row: span 1; height: 350px;">
+      <div class="panel-header">
+        <div class="panel-title"><i class="fa fa-list"></i> Real-time Telemetry Feed</div>
+      </div>
+      <div class="panel-body">
+        <div class="alarm-feed-container">
+          <div class="feed-list" id="feed-list-container">
+            <!-- Paginated live alarms -->
+          </div>
+          <div class="pagination-bar">
+            <button id="feed-prev" class="page-btn" onclick="prevFeedPage()" disabled>Previous</button>
+            <span id="feed-page-info" class="page-info">Page 1 of 1</span>
+            <button id="feed-next" class="page-btn" onclick="nextFeedPage()" disabled>Next</button>
+          </div>
+        </div>
+      </div>
+    </div>
+
+  </div>
+
+  <!-- ── VERIFICATION LEDGER PANEL ── -->
+  <div class="ledger-panel">
+    <div style="display: flex; justify-content: space-between; align-items: center; border-bottom: 1px solid var(--border); padding-bottom: 12px; margin-bottom: 12px;">
+      <h2 style="font-size: 14px; font-weight: 800; text-transform: uppercase;"><i class="fa fa-clipboard-check" style="color: var(--bsnl-orange);"></i> Prediction Verification Ledger</h2>
+      <!-- Filters -->
+      <div style="display: flex; gap: 8px;">
+        <button class="page-btn active" id="ledger-filter-all" onclick="filterLedger('ALL')">All</button>
+        <button class="page-btn" id="ledger-filter-pending" onclick="filterLedger('PENDING')">Pending</button>
+        <button class="page-btn" id="ledger-filter-tp" onclick="filterLedger('TRUE_POSITIVE')">TP</button>
+        <button class="page-btn" id="ledger-filter-fp" onclick="filterLedger('FALSE_POSITIVE')">FP</button>
+      </div>
+    </div>
+
+    <div class="ledger-table-container">
+      <table class="ledger-table" id="ledger-table">
+        <thead>
+          <tr>
+            <th></th>
+            <th onclick="sortLedger('node')">Node</th>
+            <th onclick="sortLedger('predicted_at')">Predicted At</th>
+            <th onclick="sortLedger('risk_score')">Risk Score</th>
+            <th onclick="sortLedger('risk_level')">Level</th>
+            <th onclick="sortLedger('status')">Status</th>
+            <th onclick="sortLedger('estimated_ttf')">Est. TTF</th>
+            <th>Observed Failure Path</th>
+          </tr>
+        </thead>
+        <tbody id="ledger-table-body">
+          <!-- Verification ledger records paginated -->
+        </tbody>
+      </table>
+    </div>
+
+    <div class="pagination-bar">
+      <button id="ledger-prev" class="page-btn" onclick="prevLedgerPage()" disabled>Previous</button>
+      <span id="ledger-page-info" class="page-info">Page 1 of 1</span>
+      <button id="ledger-next" class="page-btn" onclick="nextLedgerPage()" disabled>Next</button>
+    </div>
+  </div>
+
+  <!-- ── SIDE DRAWER FOR NODE DETAILS ── -->
+  <div class="drawer" id="node-drawer">
+    <div class="drawer-header">
+      <h3 id="drawer-node-name" style="font-size: 16px; font-weight: 800; color: var(--text);">host-er2-router-03</h3>
+      <button class="drawer-close" onclick="closeDrawer()">&times;</button>
+    </div>
+    <div class="drawer-body">
+      
+      <!-- Root Cause Analysis widget -->
+      <div class="ledger-details-section">
+        <div class="ledger-details-title">Topology Correlation Root Cause</div>
+        <div id="drawer-rc-result" style="font-size: 13px; font-weight: bold; margin-bottom: 8px;">Determining...</div>
+        <div id="drawer-rc-type" class="status-pill PENDING" style="margin-bottom: 12px;">UNKNOWN</div>
+        <div class="forecast-box">
+          <div class="forecast-title">Causal Adjacency Timeline</div>
+          <div id="drawer-causal-chain" style="font-size: 11px; display: flex; flex-direction: column; gap: 4px; color: var(--text-muted);">
+            <!-- causal chain items -->
+          </div>
+        </div>
+      </div>
+
+      <!-- Impacted Services widget -->
+      <div class="ledger-details-section">
+        <div class="ledger-details-title">Estimated Service Impact (BSNL Network)</div>
+        <div class="service-impact-list">
+          <div class="service-card">
+            <div id="drawer-impact-l3vpn" class="num">0</div>
+            <div class="lbl">L3VPN Clients</div>
+          </div>
+          <div class="service-card">
+            <div id="drawer-impact-l2vpn" class="num">0</div>
+            <div class="lbl">L2VPN Links</div>
+          </div>
+          <div class="service-card">
+            <div id="drawer-impact-ibgp" class="num">0</div>
+            <div class="lbl">iBGP Peers</div>
+          </div>
+          <div class="service-card">
+            <div id="drawer-impact-ebgp" class="num">0</div>
+            <div class="lbl">eBGP Peers</div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Feature Importance chart -->
+      <div class="ledger-details-section">
+        <div class="ledger-details-title">Top Contributing Telemetry Features</div>
+        <div id="drawer-features" class="features-chart">
+          <!-- dynamic feature rows -->
+        </div>
+      </div>
+
+    </div>
+  </div>
+
+  <!-- Toast Notification element -->
+  <div id="toast-container"></div>
+
+  <script>
+    const API = "";
+    
+    // ── Global State variables ──
+    const nodesMap = new Map();
+    const llmSummaries = new Map();
+    let ledgerRecords = [];
+    let ledgerFilter = 'ALL';
+    let ledgerPage = 1;
+    const ledgerLimit = 20;
+    let ledgerSortKey = 'predicted_at';
+    let ledgerSortDir = -1; // -1 = newest first
+    const expandedRows = new Set(); // Track keys: `${node}-${predicted_at}`
+
+    let feedAlarms = [];
+    let feedPage = 1;
+    const feedLimit = 50;
+
+    let fetchLedgerTimeout = null;
+    function throttleFetchLedger() {
+      if (fetchLedgerTimeout) return;
+      fetchLedgerTimeout = setTimeout(() => {
+        fetchLedgerTimeout = null;
+        fetchLedger();
+      }, 1000);
+    }
+
+    // Socket.io connections with reconnect logic
+    let predSocket, llmSocket;
+
+    function initSockets() {
+      // Create connection options with exponential backoff
+      const socketOptions = {
+        reconnection: true,
+        reconnectionAttempts: Infinity,
+        reconnectionDelay: 1000,
+        reconnectionDelayMax: 10000,
+        randomizationFactor: 0.5
+      };
+
+      predSocket = io(`${API}/predictions`, socketOptions);
+      llmSocket = io(`${API}/llm`, socketOptions);
+
+      // Connection status indicators
+      const statusDot = document.getElementById("socket-status-dot");
+      const statusText = document.getElementById("socket-status-text");
+
+      predSocket.on("connect", () => {
+        statusDot.className = "status-dot connected";
+        statusText.innerText = "Connected";
+        // Fetch historical data page 1 on reconnect/connect
+        fetchEvents();
+        fetchLedger();
+      });
+
+      predSocket.on("disconnect", () => {
+        statusDot.className = "status-dot";
+        statusText.innerText = "Disconnected";
+      });
+
+      predSocket.on("prediction_update", (data) => {
+        handlePredictionUpdate(data);
+      });
+
+      llmSocket.on("llm_summary", (data) => {
+        handleLlmSummary(data);
       });
     }
-  }, 10000);
-}
 
-function dismissToast(button) {
-  const toast = button.closest('.toast');
-  if (toast) {
-    toast.classList.add('slide-out');
-    toast.addEventListener('animationend', () => {
-      toast.remove();
-    });
-  }
-}
-
-function renderWarnings(warnings) {
-  const el = document.getElementById('warnings-list');
-  if (!warnings || warnings.length === 0) {
-    el.innerHTML = '<div id="no-warnings">✓ No active warnings</div>';
-    checkAndTriggerToasts([]);
-    return;
-  }
-  
-  el.innerHTML = warnings.slice(0, 15).map(w => {
-    const eta = formatETA(w.scored_at, w.estimated_ttf);
-    const diagnosticMsg = generateDiagnosticMessage(w, eta);
-
-    return `<div class="warning-card ${w.risk_level}" style="padding: 12px 14px; margin-bottom: 10px; line-height: 1.4;">
-      <div class="w-node" style="font-size: 13px; font-weight: 700; border-bottom: 1px solid var(--border); padding-bottom: 6px; margin-bottom: 8px; display: flex; justify-content: space-between; align-items: center;">
-        <span>${shortNode(w.node)}</span>
-        <span class="risk-badge" style="font-size:9px;padding:1px 5px;border-radius:3px;margin:0;">${w.risk_level}</span>
-      </div>
-      <div style="font-size: 11px; color: var(--text);">
-        ${diagnosticMsg}
-      </div>
-    </div>`;
-  }).join('');
-
-  checkAndTriggerToasts(warnings);
-}
-
-function renderFeed(alarms) {
-  const el = document.getElementById('alarm-feed');
-  el.innerHTML = alarms.slice(0, 30).map(a => {
-    const ts = new Date(a.ts).toLocaleTimeString('en-GB', { hour12: false });
-    return `<div class="alarm-row">
-      <div class="sev-dot ${a.severity}"></div>
-      <div>
-        <div class="a-cond">${a.condition}</div>
-        <div class="a-node">${shortNode(a.node)}</div>
-      </div>
-      <div class="a-ts">${ts}</div>
-    </div>`;
-  }).join('');
-}
-
-function formatDatasetDate(isoStr) {
-  if (!isoStr) return '—';
-  try {
-    const d = new Date(isoStr);
-    if (isNaN(d.getTime())) return '—';
-    const y = d.getFullYear();
-    const mo = String(d.getMonth() + 1).padStart(2, '0');
-    const day = String(d.getDate()).padStart(2, '0');
-    const h = String(d.getHours()).padStart(2, '0');
-    const mi = String(d.getMinutes()).padStart(2, '0');
-    const s = String(d.getSeconds()).padStart(2, '0');
-    return `${y}-${mo}-${day} ${h}:${mi}:${s}`;
-  } catch (e) {
-    return '—';
-  }
-}
-
-function formatCiscoAlarm(a, i) {
-  const dto = a.alarmsDTO || {};
-  const severity = dto.severity || 'UNKNOWN';
-  let sevColor = '#58a6ff'; // Default
-  if (severity === 'CRITICAL') sevColor = '#ff4d4f';
-  else if (severity === 'MAJOR') sevColor = '#fa8c16';
-  else if (severity === 'MINOR') sevColor = '#fadb14';
-  else if (severity === 'WARNING') sevColor = '#faad14';
-
-  const ackStatus = dto.acknowledgementStatus 
-    ? '<span style="color:#52c41a;font-weight:700;">✓ Acknowledged</span>'
-    : '<span style="color:#ff4d4f;font-weight:700;">⚠ Unacknowledged</span>';
-
-  const condition = dto.condition ? (dto.condition.value || 'UNKNOWN') : 'UNKNOWN';
-  const category = dto.category ? (dto.category.value || 'System') : 'System';
-  const displayDate = dto.alarmFoundAt ? dto.alarmFoundAt.replace('T', ' ').substring(0, 19) : '—';
-
-  return `
-    <div style="background:#161b22;border:1px solid var(--border);border-radius:8px;padding:12px;margin-bottom:12px;font-family:inherit;text-align:left;">
-      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;flex-wrap:wrap;gap:8px;">
-        <span style="font-size:11px;font-weight:800;color:var(--accent);">🔴 Alarm #${i+1} (ID: ${dto.alarmId || dto.displayName || '—'})</span>
-        <span style="background:${sevColor}15;border:1px solid ${sevColor}50;color:${sevColor};padding:2px 8px;border-radius:4px;font-size:10px;font-weight:700;text-transform:uppercase;">
-          ${severity}
-        </span>
-      </div>
-      <div style="font-size:12px;font-weight:800;color:var(--text);margin-bottom:6px;font-family:monospace;word-break:break-all;">
-        ${condition}
-      </div>
-      <div style="font-size:11px;color:#c9d1d9;background:#0d1117;padding:8px 10px;border-radius:6px;border:1px solid #30363d;margin-bottom:10px;line-height:1.5;">
-        ${dto.message || 'No description message provided.'}
-      </div>
-      <div style="display:grid;grid-template-columns:repeat(auto-fit, minmax(180px, 1fr));gap:6px;font-size:10px;color:var(--muted);border-top:1px solid #21262d;padding-top:8px;">
-        <div>Device: <strong style="color:var(--text);font-family:monospace;">${dto.deviceName || '—'}</strong></div>
-        <div>Category: <strong style="color:var(--text);">${category}</strong></div>
-        <div>Detected At: <strong style="color:var(--text);font-family:monospace;">${displayDate}</strong></div>
-        <div>Status: <strong>${ackStatus}</strong></div>
-        <div>Source: <strong style="color:var(--text);">${dto.source || '—'}</strong></div>
-        ${dto.wirelessSroutercificAlarmId ? `<div>Wireless ID: <strong style="color:var(--text);">${dto.wirelessSroutercificAlarmId}</strong></div>` : ''}
-      </div>
-      ${a['@url'] ? `
-        <div style="margin-top:8px;font-size:9px;border-top:1px dashed #21262d;padding-top:4px;word-break:break-all;color:var(--muted);">
-          🔗 API URL: <a href="${a['@url']}" target="_blank" style="color:#58a6ff;text-decoration:none;font-family:monospace;">${a['@url']}</a>
-        </div>
-      ` : ''}
-    </div>
-  `;
-}
-
-function renderSummary(s) {
-  document.getElementById('s-total').textContent = s.total_nodes ?? '—';
-  document.getElementById('s-crit').textContent  = s.critical_nodes ?? '—';
-  document.getElementById('s-high').textContent  = s.high_nodes ?? '—';
-  document.getElementById('s-med').textContent   = s.medium_nodes ?? '—';
-  document.getElementById('s-low').textContent   = s.low_nodes ?? '—';
-  document.getElementById('s-auc').textContent   = s.model_auc ? s.model_auc.toFixed(4) : '—';
-  document.getElementById('s-model').textContent = (s.model_name || '—').replace('RandomForest','RF').replace('XGBoost','XGB');
-
-  if (s.dataset_start) {
-    document.getElementById('ds-start').textContent = formatDatasetDate(s.dataset_start);
-  }
-  if (s.dataset_end) {
-    document.getElementById('ds-end').textContent = formatDatasetDate(s.dataset_end);
-  }
-  if (s.dataset_duration) {
-    document.getElementById('ds-duration').textContent = s.dataset_duration;
-  }
-}
-
-function renderProgress(ingested, total) {
-  const pct = total > 0 ? Math.round(ingested / total * 100) : 0;
-  document.getElementById('sim-bar-fill').style.width = pct + '%';
-  document.getElementById('sim-pct').textContent = pct + '%';
-  if (total > 0) {
-    document.getElementById('sim-label').textContent = `Replaying ${ingested.toLocaleString()} / ${total.toLocaleString()} alarms`;
-  } else {
-    document.getElementById('sim-label').textContent = 'Simulator idle — Click a play button to begin';
-  }
-}
-
-function updateClock(isoStr, isRunning) {
-  const clock = document.getElementById('sim-clock');
-  const valEl = document.getElementById('sim-clock-val');
-  if (!isoStr) {
-    valEl.textContent = 'SYSTEM IDLE';
-    valEl.style.color = 'var(--muted)';
-    clock.style.borderColor = 'var(--border)';
-    clock.style.boxShadow = 'none';
-    return;
-  }
-  try {
-    const d = new Date(isoStr);
-    if (isNaN(d.getTime())) {
-      valEl.textContent = 'SYSTEM IDLE';
-      valEl.style.color = 'var(--muted)';
-      clock.style.borderColor = 'var(--border)';
-      clock.style.boxShadow = 'none';
-      return;
-    }
-    const y = d.getFullYear();
-    const mo = String(d.getMonth() + 1).padStart(2, '0');
-    const day = String(d.getDate()).padStart(2, '0');
-    const h = String(d.getHours()).padStart(2, '0');
-    const mi = String(d.getMinutes()).padStart(2, '0');
-    const s = String(d.getSeconds()).padStart(2, '0');
-    valEl.textContent = `${y}-${mo}-${day} ${h}:${mi}:${s}`;
-    
-    if (isRunning) {
-      valEl.style.color = 'var(--accent)';
-      clock.style.borderColor = 'var(--accent)';
-      clock.style.boxShadow = '0 0 8px rgba(88, 166, 255, 0.2)';
-    } else {
-      valEl.style.color = 'var(--low)';
-      clock.style.borderColor = 'var(--low)';
-      clock.style.boxShadow = 'none';
-    }
-  } catch (e) {
-    valEl.textContent = 'SYSTEM IDLE';
-    valEl.style.color = 'var(--muted)';
-    clock.style.borderColor = 'var(--border)';
-    clock.style.boxShadow = 'none';
-  }
-}
-
-function handleMessage(msg) {
-  if (msg.summary)       renderSummary(msg.summary);
-  if (msg.nodes)         renderNodes(msg.nodes);
-  if (msg.warnings)      renderWarnings(msg.warnings);
-  if (msg.recent_alarms) renderFeed(msg.recent_alarms);
-  renderProgress(msg.ingested || 0, msg.total || 0);
-
-  const isRunning = msg.type !== 'done' && (msg.total > 0 && msg.ingested < msg.total);
-  updateClock(msg.sim_time, isRunning);
-
-  if (msg.dataset_start) {
-    document.getElementById('ds-start').textContent = formatDatasetDate(msg.dataset_start);
-  }
-  if (msg.dataset_end) {
-    document.getElementById('ds-end').textContent = formatDatasetDate(msg.dataset_end);
-  }
-  if (msg.dataset_duration) {
-    document.getElementById('ds-duration').textContent = msg.dataset_duration;
-  }
-
-  if (msg.type === 'done') {
-    document.getElementById('sim-label').textContent = `✓ Replay complete — ${(msg.ingested||0).toLocaleString()} alarms processed`;
-    document.getElementById('conn-label').textContent = 'Live (idle)';
-  } else if (msg.total > 0 && isRunning) {
-    // Running — label is set by startFullSimulation, don't overwrite
-  }
-  // If total=0 (idle/not started), preserve the green ready label
-}
-
-
-// ── WebSocket ────────────────────────────────────────────────────────────────
-function connect() {
-  const host = location.host;
-  const ws = new WebSocket(`ws://${host}/ws`);
-  const dot = document.getElementById('conn-dot');
-  const lbl = document.getElementById('conn-label');
-
-  ws.onopen = () => {
-    dot.classList.add('live');
-    lbl.textContent = 'Live';
-  };
-  ws.onmessage = e => {
-    try { handleMessage(JSON.parse(e.data)); } catch {}
-  };
-  ws.onclose = () => {
-    dot.classList.remove('live');
-    lbl.textContent = 'Reconnecting…';
-    setTimeout(connect, 2000);
-  };
-  ws.onerror = () => ws.close();
-}
-
-const API = `http://${location.host}`;
-
-async function startScenario() {
-  document.getElementById('sim-label').textContent = 'Initialising scenario…';
-  try {
-    const res = await fetch(`${API}/api/sim/scenario`, { method: 'POST' });
-    if (!res.ok) {
-      const errText = await res.text();
-      throw new Error(errText || `Server error (status ${res.status})`);
-    }
-    const data = await res.json();
-    if (data.status === 'started') {
-      document.getElementById('sim-label').textContent = 'Running gradual failure scenario…';
-    } else {
-      alert('Error starting scenario: ' + (data.message || 'Busy'));
-    }
-  } catch (err) {
-    alert('Failed to start scenario: ' + err.message);
-  }
-}
-
-async function startFullSimulation() {
-  const btn = document.querySelector('[onclick="startFullSimulation()"]');
-  if (btn) { btn.disabled = true; btn.textContent = '⏳ Starting…'; }
-  document.getElementById('sim-label').textContent = 'Initialising full simulation…';
-  try {
-    const res = await fetch(`${API}/api/sim/restart`, { method: 'POST' });
-    if (!res.ok) {
-      const errText = await res.text();
-      throw new Error(errText || `Server error (status ${res.status})`);
-    }
-    const data = await res.json();
-    if (data.status === 'started') {
-      document.getElementById('sim-label').textContent = 'Running full simulation stream…';
-      if (btn) { btn.textContent = '▶ Play Simulation (All Alarms)'; btn.disabled = false; }
-    } else if (data.status === 'already running') {
-      document.getElementById('sim-label').textContent = '▶ Simulation already running…';
-      if (btn) { btn.textContent = '▶ Play Simulation (All Alarms)'; btn.disabled = false; }
-    } else {
-      alert('Error starting simulation: ' + (data.status || 'Unknown error'));
-      if (btn) { btn.textContent = '▶ Play Simulation (All Alarms)'; btn.disabled = false; }
-    }
-  } catch (err) {
-    alert('Failed to start simulation: ' + err.message);
-    if (btn) { btn.textContent = '▶ Play Simulation (All Alarms)'; btn.disabled = false; }
-  }
-}
-
-async function changeSpeed(sleep_ms) {
-  try {
-    const res = await fetch(`${API}/api/sim/speed`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ sleep_ms: parseInt(sleep_ms, 10) })
-    });
-    if (!res.ok) {
-      const errText = await res.text();
-      throw new Error(errText || `Server error (status ${res.status})`);
-    }
-  } catch {}
-}
-
-async function injectAlarm(condition, severity, category) {
-  const node = document.getElementById('sandbox-node').value;
-  try {
-    const res = await fetch(`${API}/api/ingest`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ node, condition, severity, category })
-    });
-    if (!res.ok) {
-      const errText = await res.text();
-      throw new Error(errText || `Server error (status ${res.status})`);
-    }
-    const [sum, nodes, warn] = await Promise.all([
-      fetch(`${API}/api/summary`).then(r => { if (!r.ok) throw new Error(); return r.json(); }),
-      fetch(`${API}/api/nodes`).then(r => { if (!r.ok) throw new Error(); return r.json(); }),
-      fetch(`${API}/api/warnings`).then(r => { if (!r.ok) throw new Error(); return r.json(); }),
-    ]);
-    renderSummary(sum);
-    renderNodes(nodes);
-    renderWarnings(warn);
-  } catch (err) {
-    alert('Failed to inject alarm: ' + err.message);
-  }
-}
-
-async function resetPredictor() {
-  if (!confirm('Are you sure you want to reset the sandbox? This clears all windows and risk scores.')) return;
-  try {
-    const res = await fetch(`${API}/api/sim/reset`, { method: 'POST' });
-    if (!res.ok) {
-      const errText = await res.text();
-      throw new Error(errText || `Server error (status ${res.status})`);
-    }
-    const data = await res.json();
-    if (data.status === 'reset') {
-      location.reload();
-    }
-  } catch (err) {
-    alert('Failed to reset: ' + err.message);
-  }
-}
-
-// ── Test Split / Repartition ──────────────────────────────────────────
-async function applyTestSplit() {
-  const testSize = parseFloat(document.getElementById('split-select').value);
-  const btn = document.getElementById('apply-split-btn');
-  const statusEl = document.getElementById('split-status');
-  btn.disabled = true;
-  btn.textContent = '⏳ Retraining…';
-  statusEl.textContent = 'Retraining model on selected split — this may take 30–60s…';
-  statusEl.style.color = 'var(--medium)';
-  try {
-    const res = await fetch(`${API}/api/sim/repartition`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ test_size: testSize })
-    });
-    if (!res.ok) {
-      const errText = await res.text();
-      throw new Error(errText || `Server error (status ${res.status})`);
-    }
-    const data = await res.json();
-    if (data.status === 'ok') {
-      const splitPct = Math.round(testSize * 100);
-      const trainPct = Math.round((1 - testSize) * 100);
-      statusEl.textContent = `✅ Retrained! Model: ${data.model} | AUC: ${data.roc_auc} | Train: ${data.train_samples} samples (${trainPct}%) | Test: ${data.test_samples} samples (${splitPct}%)`;
-      statusEl.style.color = 'var(--low)';
+    // ── Handle Predictions and LLM Summaries ──
+    function handlePredictionUpdate(data) {
+      nodesMap.set(data.node, data);
       
-      const playSimBtn = document.getElementById('play-sim-btn');
-      if (playSimBtn) playSimBtn.disabled = false;
-      const playScenarioBtn = document.getElementById('play-scenario-btn');
-      if (playScenarioBtn) playScenarioBtn.disabled = false;
+      // Update Sim Clock with current alarm timestamp
+      if (data.simulation && data.simulation.current_alarm_ts) {
+        const simTime = new Date(data.simulation.current_alarm_ts);
+        document.getElementById("sim-clock-val").innerText = simTime.toLocaleDateString() + " " + simTime.toLocaleTimeString();
+        document.getElementById("sim-clock").style.borderColor = "var(--bsnl-orange)";
+      }
 
-      // Reload ledger and reset UI
-      renderLedger({ resolved: [], pending: [], total_predictions: 0, true_positives: 0, false_positives: 0, pending_count: 0, precision: null });
-    } else {
-      statusEl.textContent = `⚠ ${data.message || 'Repartition failed'}`;
-      statusEl.style.color = 'var(--critical)';
+      // Update stats summary counts
+      const health = data.network_health_summary;
+      if (health) {
+        document.getElementById("stat-total-nodes").innerText = health.total_nodes || 0;
+        document.getElementById("stat-crit-count").innerText = health.critical_count || 0;
+        document.getElementById("stat-high-count").innerText = health.high_count || 0;
+        document.getElementById("stat-alarms-rate").innerText = (health.alarms_per_minute || 0.0).toFixed(1);
+        
+        // Precision gauge update
+        const precision = health.live_precision || 0;
+        document.getElementById("gauge-val").innerText = (precision * 100).toFixed(1) + "%";
+        const offset = 251.2 - (precision * 251.2);
+        document.getElementById("gauge-circle").style.strokeDashoffset = offset;
+        document.getElementById("stat-tp").innerText = health.true_positives || 0;
+        document.getElementById("stat-fp").innerText = health.false_positives || 0;
+      }
+
+      // Trigger telemetry toast if risk level is CRITICAL or HIGH
+      if (data.risk.level === 'CRITICAL' || data.risk.level === 'HIGH') {
+        // showToast(data); // Disabled per request
+      }
+
+      // Add alarms from this update to the feed (with noise reduction rules)
+      if (data.recent_alarms_raw) {
+        processIncomingAlarms(data.recent_alarms_raw, data.node, data.risk.level);
+      }
+
+      // Refresh Warning Cards
+      updateWarningsList();
+
+      // Refresh Topology Graph
+      updateTopologyGraph();
+
+      // Auto refresh ledger to show pending predictions (throttled)
+      throttleFetchLedger();
     }
-  } catch (err) {
-    statusEl.textContent = `❌ Error: ${err.message}`;
-    statusEl.style.color = 'var(--critical)';
-  } finally {
-    btn.disabled = false;
-    btn.textContent = '⚙ Apply & Retrain';
-  }
-}
 
-async function handleCustomDataUpload(event) {
-  const file = event.target.files[0];
-  if (!file) return;
+    function handleLlmSummary(data) {
+      llmSummaries.set(data.node, data.llm_summary);
+      updateWarningsList();
+    }
 
-  const statusEl = document.getElementById('upload-status');
-  statusEl.textContent = '⏳ Uploading and processing telemetry JSON…';
-  statusEl.style.color = 'var(--medium)';
+    // ── Toast Notifications ──
+    function showToast(data) {
+      const container = document.getElementById("toast-container");
+      
+      // Prevent duplicate active toasts for the same node
+      const existing = document.getElementById(`toast-${data.node.replace(/\./g, '-')}`);
+      if (existing) return;
 
-  const formData = new FormData();
-  formData.append('file', file);
+      const toast = document.createElement("div");
+      toast.id = `toast-${data.node.replace(/\./g, '-')}`;
+      toast.className = `toast ${data.risk.level}`;
 
-  try {
-    const res = await fetch(`${API}/api/sim/upload`, {
-      method: 'POST',
-      body: formData
+      toast.innerHTML = `
+        <div style="display:flex; justify-content:space-between; align-items:center;">
+          <strong style="color:var(--text); font-size:12px;"><i class="fa fa-bell" style="color:var(--color-critical);"></i> Predictive Warning</strong>
+          <span style="font-size:9px; color:var(--text-muted); cursor:pointer;" onclick="this.parentElement.parentElement.remove()">✕</span>
+        </div>
+        <div style="font-size:11px;">
+          Node <strong>${data.node}</strong> is at <strong>${data.risk.level}</strong> risk of outage (${(data.risk.score*100).toFixed(1)}%).
+          <div style="color:var(--bsnl-orange); margin-top:2px;">Est. Time-to-failure: ~${data.risk.ttf_minutes || 60} minutes</div>
+        </div>
+      `;
+      container.appendChild(toast);
+
+      // Auto remove after 6 seconds
+      setTimeout(() => {
+        if (toast.parentElement) toast.remove();
+      }, 6000);
+    }
+
+    // ── Noise Reduction Alarm Engine ──
+    function processIncomingAlarms(rawAlarms, node, riskLevel) {
+      // Find critical alarms in this update to support the 10min clear check
+      const criticalTimes = rawAlarms
+        .filter(a => a.severity === 'CRITICAL')
+        .map(a => new Date(a.ts).getTime());
+
+      rawAlarms.forEach(alarm => {
+        // Noise reduction rule 3: MINOR alarms suppressed from display if node has active CRITICAL
+        if (alarm.severity === 'MINOR' && riskLevel === 'CRITICAL') {
+          return; 
+        }
+
+        // Noise reduction rule 1: CLEARED alarms: only show if they follow a CRITICAL within 10 minutes
+        if (alarm.severity === 'CLEARED') {
+          const clearedTime = new Date(alarm.ts).getTime();
+          const followedCritical = criticalTimes.some(critTime => {
+            const diff = clearedTime - critTime;
+            return diff > 0 && diff <= 10 * 60 * 1000;
+          });
+          if (!followedCritical) return;
+        }
+
+        // Check for duplicates (Noise reduction rule 2)
+        const isDuplicate = feedAlarms.length > 0 && 
+          feedAlarms[0].condition === alarm.condition && 
+          feedAlarms[0].node === node;
+
+        if (isDuplicate) {
+          feedAlarms[0].count = (feedAlarms[0].count || 1) + 1;
+          feedAlarms[0].ts = alarm.ts; // update ts to latest
+        } else {
+          feedAlarms.unshift({
+            ...alarm,
+            node: node,
+            count: 1
+          });
+        }
+      });
+
+      // Cap size
+      if (feedAlarms.length > 1000) {
+        feedAlarms = feedAlarms.slice(0, 1000);
+      }
+
+      renderFeed();
+    }
+
+    // ── Render Alarm Feed with Pagination ──
+    function renderFeed() {
+      const container = document.getElementById("feed-list-container");
+      container.innerHTML = "";
+
+      const start = (feedPage - 1) * feedLimit;
+      const end = start + feedLimit;
+      const pageAlarms = feedAlarms.slice(start, end);
+
+      if (pageAlarms.length === 0) {
+        container.innerHTML = `<div style="text-align: center; color: var(--text-muted); font-size: 12px; margin-top: 40px;">No telemetry received yet.</div>`;
+        document.getElementById("feed-page-info").innerText = "Page 1 of 1";
+        document.getElementById("feed-prev").disabled = true;
+        document.getElementById("feed-next").disabled = true;
+        return;
+      }
+
+      pageAlarms.forEach(a => {
+        const card = document.createElement("div");
+        card.className = "alarm-card";
+        card.onclick = () => showAlarmDetailsModal(a);
+        
+        let sevIcon = "fa-circle-info";
+        if (a.severity === 'CRITICAL') sevIcon = "fa-triangle-exclamation";
+        else if (a.severity === 'MAJOR') sevIcon = "fa-circle-exclamation";
+        else if (a.severity === 'CLEARED') sevIcon = "fa-circle-check";
+
+        const countBadge = a.count > 1 ? `<span class="alarm-badge-count">${a.count}</span>` : "";
+        const timeAgo = formatTimeAgo(a.ts);
+
+        card.innerHTML = `
+          <div class="alarm-severity-icon ${a.severity}">
+            <i class="fa ${sevIcon}"></i>
+          </div>
+          <div class="alarm-content">
+            <div class="alarm-main">${a.condition} ${countBadge}</div>
+            <div class="alarm-sub">${a.node}</div>
+          </div>
+          <div class="alarm-time">${timeAgo}</div>
+        `;
+        container.appendChild(card);
+      });
+
+      const totalPages = Math.ceil(feedAlarms.length / feedLimit) || 1;
+      document.getElementById("feed-page-info").innerText = `Page ${feedPage} of ${totalPages}`;
+      document.getElementById("feed-prev").disabled = feedPage === 1;
+      document.getElementById("feed-next").disabled = feedPage === totalPages;
+    }
+
+    function prevFeedPage() { if (feedPage > 1) { feedPage--; renderFeed(); } }
+    function nextFeedPage() { if (feedPage < Math.ceil(feedAlarms.length / feedLimit)) { feedPage++; renderFeed(); } }
+
+    // ── Active Warnings Panel Rendering ──
+    function updateWarningsList() {
+      const container = document.getElementById("warnings-container");
+      const noWarningsText = document.getElementById("no-active-warnings");
+      
+      const activeNodes = Array.from(nodesMap.values())
+        .filter(n => n.risk.level === 'HIGH' || n.risk.level === 'CRITICAL')
+        .sort((a, b) => b.risk.score - a.risk.score);
+
+      if (activeNodes.length === 0) {
+        container.innerHTML = "";
+        noWarningsText.style.display = "block";
+        return;
+      }
+      noWarningsText.style.display = "none";
+      container.innerHTML = "";
+
+      activeNodes.forEach(nodeData => {
+        const card = document.createElement("div");
+        const summary = llmSummaries.get(nodeData.node);
+        const urgency = summary ? summary.urgency : "INVESTIGATE";
+        card.className = `warning-card ${urgency}`;
+
+        // Build features chart
+        let featsHtml = "";
+        if (nodeData.top_features) {
+          nodeData.top_features.slice(0, 3).forEach(f => {
+            featsHtml += `
+              <div class="feature-bar-row">
+                <span class="feature-name">${f.feature}</span>
+                <div class="feature-bar-bg">
+                  <div class="feature-bar-fill" style="width: ${f.bar_width_pct}%"></div>
+                </div>
+                <span style="font-size: 9px; color: var(--text-muted);">${f.raw_value.toFixed(1)}</span>
+              </div>
+            `;
+          });
+        }
+
+        // Build predicted transition path chips
+        let pathHtml = "";
+        if (nodeData.markov_forecast && nodeData.markov_forecast.predicted_transition_path) {
+          nodeData.markov_forecast.predicted_transition_path.forEach((p, idx) => {
+            pathHtml += `<span class="chip ${idx === 0 ? 'highlighted' : ''}">${p}</span>`;
+          });
+        }
+
+        // LLM section skeleton or details
+        let llmHtml = "";
+        if (summary) {
+          llmHtml = `
+            <div class="llm-summary-block">
+              <div class="llm-header"><i class="fa fa-robot"></i> BSNL NOC LLM Insight</div>
+              <div class="llm-content">
+                <div><strong>WHAT:</strong> ${summary.what}</div>
+                <div style="margin-top: 4px;"><strong>ACTION:</strong> ${summary.action}</div>
+              </div>
+            </div>
+          `;
+        } else {
+          llmHtml = `
+            <div class="llm-summary-block">
+              <div class="llm-header"><i class="fa fa-robot"></i> BSNL NOC LLM Insight</div>
+              <div class="skeleton-text medium"></div>
+              <div class="skeleton-text short"></div>
+            </div>
+          `;
+        }
+
+        card.innerHTML = `
+          <div class="warning-header">
+            <span class="warning-node" onclick="openNodeDrawer('${nodeData.node}')" style="cursor: pointer; text-decoration: underline;">${nodeData.node}</span>
+            <div class="warning-meta">
+              <span class="urgency-badge ${urgency}">${urgency}</span>
+              <span class="ttf-badge">~${nodeData.risk.ttf_minutes || 60}m TTF</span>
+            </div>
+          </div>
+          <div style="font-size: 12px; color: var(--text-muted); margin-top: 4px;">
+            <strong>Risk Score:</strong> ${(nodeData.risk.score * 100).toFixed(1)}% (${nodeData.risk.level})
+          </div>
+
+          <div class="forecast-box" style="margin-top: 8px;">
+            <div class="forecast-title">Markov Outage Sequence Forecast</div>
+            <div class="path-chips">${pathHtml}</div>
+          </div>
+
+          <div class="features-chart" style="margin-top: 8px;">
+            <div class="forecast-title">Outage Indicators</div>
+            ${featsHtml}
+          </div>
+
+          ${llmHtml}
+        `;
+        container.appendChild(card);
+      });
+    }
+
+    // ── D3.js Force Directed Graph ── Stable, throttled, full-topology version
+    let svg, simulation, gMain;
+    let _topoGraphNodes = [];   // master node list from API
+    let _topoGraphLinks = [];   // master link list from API
+    let _topoLoaded = false;    // did we load the static graph yet?
+    let _topoUpdateTimer = null; // throttle timer
+    const TOPO_REFRESH_INTERVAL = 3000; // refresh risk colours every 3s
+
+    function initTopologyGraph() {
+      svg = d3.select("#topology-svg");
+      const width  = document.getElementById("topology-svg").clientWidth  || 500;
+      const height = document.getElementById("topology-svg").clientHeight || 320;
+
+      svg.attr("viewBox", `0 0 ${width} ${height}`);
+
+      // Zoom
+      const zoom = d3.zoom()
+        .scaleExtent([0.3, 4])
+        .on("zoom", (event) => { gMain.attr("transform", event.transform); });
+      svg.call(zoom);
+      svg.on("dblclick.zoom", () => {
+        svg.transition().duration(750).call(zoom.transform, d3.zoomIdentity);
+      });
+
+      // Defs — arrowhead marker
+      const defs = svg.append("defs");
+      defs.append("marker")
+        .attr("id", "arrowhead")
+        .attr("viewBox", "-0 -5 10 10")
+        .attr("refX", 22)
+        .attr("markerWidth", 6)
+        .attr("markerHeight", 6)
+        .attr("orient", "auto")
+        .append("path")
+          .attr("d", "M 0,-5 L 10,0 L 0,5")
+          .attr("fill", "rgba(255,255,255,0.25)");
+
+      gMain = svg.append("g");
+
+      simulation = d3.forceSimulation()
+        .force("link", d3.forceLink().id(d => d.id).distance(130).strength(1))
+        .force("charge", d3.forceManyBody().strength(-350))
+        .force("center", d3.forceCenter(width / 2, height / 2))
+        .force("collision", d3.forceCollide(35))
+        .alphaDecay(0.04);
+
+      // Load graph once from static API
+      loadTopologyFromAPI();
+
+      // Poll risk colours every 3 seconds
+      setInterval(refreshTopologyRisk, TOPO_REFRESH_INTERVAL);
+    }
+
+    function loadTopologyFromAPI() {
+      fetch(`${API}/api/topology`)
+        .then(r => r.json())
+        .then(data => {
+          _topoGraphNodes = data.nodes || [];
+          _topoGraphLinks = data.links || [];
+          _topoLoaded = true;
+          renderTopologyGraph();
+        })
+        .catch(err => console.warn("[topology] Failed to load:", err));
+    }
+
+    function refreshTopologyRisk() {
+      if (!_topoLoaded || !svg) return;
+      fetch(`${API}/api/topology`)
+        .then(r => r.json())
+        .then(data => {
+          const riskMap = {};
+          (data.nodes || []).forEach(n => { riskMap[n.id] = n; });
+          const linkStatusMap = {};
+          (data.links || []).forEach(l => {
+            const key = [l.source, l.target].sort().join("|");
+            linkStatusMap[key] = l.status;
+          });
+
+          // Update node colours without restarting simulation
+          gMain.selectAll(".node-group").each(function(d) {
+            const info = riskMap[d.id];
+            if (info) {
+              d.riskLevel = info.riskLevel;
+              d.riskScore = info.riskScore;
+              d.fullName  = info.fullName;
+            }
+          });
+          gMain.selectAll(".node-group circle.node")
+            .attr("fill", d => riskColour(d.riskLevel))
+            .attr("stroke", d => d.riskLevel === "CRITICAL" ? "var(--color-critical)" : "var(--border)")
+            .attr("stroke-width", d => d.riskLevel === "CRITICAL" ? 3 : 1.5);
+
+          // Update link status
+          gMain.selectAll("line.link").each(function(d) {
+            const key = [d.source.id || d.source, d.target.id || d.target].sort().join("|");
+            const status = linkStatusMap[key] || "UP";
+            d3.select(this).attr("class", `link ${status === 'DOWN' ? 'down' : ''}`);
+          });
+        })
+        .catch(() => {});
+    }
+
+    function riskColour(level) {
+      if (level === 'CRITICAL') return 'var(--color-critical)';
+      if (level === 'HIGH')     return 'var(--color-high)';
+      if (level === 'MEDIUM')   return 'var(--color-medium)';
+      return 'var(--color-low)';
+    }
+
+    function renderTopologyGraph() {
+      if (!svg || !_topoLoaded) return;
+
+      const width  = document.getElementById("topology-svg").clientWidth  || 500;
+      const height = document.getElementById("topology-svg").clientHeight || 320;
+
+      // Links layer
+      const linkSel = gMain.selectAll("line.link")
+        .data(_topoGraphLinks, d => `${d.source}-${d.target}`)
+        .join(
+          enter => enter.append("line")
+            .attr("class", d => `link ${d.status === 'DOWN' ? 'down' : ''}`),
+          update => update.attr("class", d => `link ${d.status === 'DOWN' ? 'down' : ''}`),
+          exit => exit.remove()
+        );
+
+      // Node groups
+      const nodeSel = gMain.selectAll("g.node-group")
+        .data(_topoGraphNodes, d => d.id)
+        .join(
+          enter => {
+            const ng = enter.append("g")
+              .attr("class", "node-group")
+              .call(d3.drag()
+                .on("start", (event, d) => {
+                  if (!event.active) simulation.alphaTarget(0.2).restart();
+                  d.fx = d.x; d.fy = d.y;
+                })
+                .on("drag", (event, d) => {
+                  d.fx = event.x; d.fy = event.y;
+                })
+                .on("end", (event, d) => {
+                  if (!event.active) simulation.alphaTarget(0);
+                  // Keep node pinned after dragging so layout doesn't fly around
+                  // d.fx = null; d.fy = null;   <-- intentionally left pinned
+                }))
+              .on("click", (event, d) => { openNodeDrawer(d.fullName || d.id); });
+
+            ng.append("circle")
+              .attr("class", "node")
+              .attr("r", 18);
+
+            ng.append("text")
+              .attr("class", "node-label")
+              .attr("dy", 30)
+              .text(d => d.id.replace("host-", "").replace("demo-", ""));
+
+            // Type badge inside circle
+            ng.append("text")
+              .attr("class", "node-type-badge")
+              .attr("dy", "0.35em")
+              .attr("text-anchor", "middle")
+              .attr("fill", "rgba(255,255,255,0.8)")
+              .attr("font-size", "7px")
+              .attr("pointer-events", "none")
+              .text(d => (d.type || 'PE').replace('_ROUTER','').replace('_','').substring(0,3));
+
+            return ng;
+          },
+          update => update,
+          exit => exit.remove()
+        );
+
+      // Apply colours to all circles
+      gMain.selectAll(".node-group circle.node")
+        .attr("fill", d => riskColour(d.riskLevel))
+        .attr("stroke", d => d.riskLevel === "CRITICAL" ? "var(--color-critical)" : "var(--border)")
+        .attr("stroke-width", d => d.riskLevel === "CRITICAL" ? 3 : 1.5);
+
+      // Bind sim
+      simulation.nodes(_topoGraphNodes);
+      simulation.force("link").links(_topoGraphLinks);
+      simulation.force("center").x(width / 2).y(height / 2);
+
+      simulation.on("tick", () => {
+        gMain.selectAll("line.link")
+          .attr("x1", d => d.source.x)
+          .attr("y1", d => d.source.y)
+          .attr("x2", d => d.target.x)
+          .attr("y2", d => d.target.y);
+
+        gMain.selectAll("g.node-group")
+          .attr("transform", d => `translate(${d.x},${d.y})`);
+      });
+
+      simulation.alpha(0.8).restart();
+    }
+
+    // Throttled update called from socket events — only refreshes colours, no restart
+    let _topoThrottleTs = 0;
+    function updateTopologyGraph() {
+      const now = Date.now();
+      if (!_topoLoaded) {
+        // Still loading — try in 2s
+        clearTimeout(_topoUpdateTimer);
+        _topoUpdateTimer = setTimeout(loadTopologyFromAPI, 2000);
+        return;
+      }
+      if (now - _topoThrottleTs < TOPO_REFRESH_INTERVAL) return; // throttle
+      _topoThrottleTs = now;
+      refreshTopologyRisk();
+    }
+
+    // ── Node Drawer Sidebar details ──
+    function openNodeDrawer(nodeName) {
+      document.getElementById("drawer-node-name").innerText = nodeName;
+      document.getElementById("node-drawer").classList.add("open");
+
+      fetch(`${API}/api/topology/rootcause?node=${nodeName}`)
+        .then(res => res.json())
+        .then(data => {
+          const rcText = data.root_cause_node ? 
+            `Node outage propagates from root node: ${data.root_cause_node}` : 
+            "Independent outage source / Local root cause node.";
+          
+          document.getElementById("drawer-rc-result").innerText = rcText;
+          
+          const badge = document.getElementById("drawer-rc-type");
+          badge.innerText = data.root_cause_type || "STABLE";
+          badge.className = `status-pill ${data.root_cause_type || 'PENDING'}`;
+
+          const chainContainer = document.getElementById("drawer-causal-chain");
+          chainContainer.innerHTML = "";
+          if (data.causal_chain && data.causal_chain.length > 0) {
+            data.causal_chain.forEach(c => {
+              const el = document.createElement("div");
+              el.innerHTML = `<i class="fa fa-caret-right" style="color: var(--bsnl-orange);"></i> ${c}`;
+              chainContainer.appendChild(el);
+            });
+          } else {
+            chainContainer.innerHTML = `<div style="color: var(--text-muted);">No propagation events recorded.</div>`;
+          }
+
+          const imp = data.impacted_services || {};
+          document.getElementById("drawer-impact-l3vpn").innerText = imp.l3vpn_customers || 0;
+          document.getElementById("drawer-impact-l2vpn").innerText = imp.l2vpn_customers || 0;
+          document.getElementById("drawer-impact-ibgp").innerText = imp.ibgp_peers_affected || 0;
+          document.getElementById("drawer-impact-ebgp").innerText = imp.ebgp_peers_affected || 0;
+        })
+        .catch(err => {
+          console.error("Failed to fetch topology rootcause:", err);
+        });
+
+      const activeData = nodesMap.get(nodeName);
+      const featContainer = document.getElementById("drawer-features");
+      featContainer.innerHTML = "";
+      
+      if (activeData && activeData.top_features) {
+        activeData.top_features.forEach(f => {
+          const el = document.createElement("div");
+          el.className = "feature-bar-row";
+          el.innerHTML = `
+            <span class="feature-name" style="width: 160px;">${f.feature}</span>
+            <div class="feature-bar-bg">
+              <div class="feature-bar-fill" style="width: ${f.bar_width_pct}%"></div>
+            </div>
+            <span style="font-size: 10px; color: var(--text-muted);">${f.raw_value.toFixed(2)}</span>
+          `;
+          featContainer.appendChild(el);
+        });
+      } else {
+        featContainer.innerHTML = `<div style="color: var(--text-muted); font-size: 12px;">No active telemetry features.</div>`;
+      }
+    }
+
+    function closeDrawer() {
+      document.getElementById("node-drawer").classList.remove("open");
+    }
+
+    // ── Verification Ledger Rendering ──
+    function fetchLedger() {
+      fetch(`${API}/api/predictions/verification?page=${ledgerPage}&limit=${ledgerLimit}&status=${ledgerFilter}`)
+        .then(res => res.json())
+        .then(data => {
+          ledgerRecords = data.items || [];
+          renderLedgerTable(data.total_items, data.page, data.pages);
+        });
+    }
+
+    function renderLedgerTable(totalItems, currentPage, totalPages) {
+      const tbody = document.getElementById("ledger-table-body");
+      tbody.innerHTML = "";
+
+      let filtered = [...ledgerRecords];
+
+      // Local sorting
+      filtered.sort((a, b) => {
+        let va = a[ledgerSortKey] ?? '';
+        let vb = b[ledgerSortKey] ?? '';
+        if (ledgerSortKey === 'risk_score') {
+          va = parseFloat(va) || 0;
+          vb = parseFloat(vb) || 0;
+        }
+        if (va < vb) return ledgerSortDir;
+        if (va > vb) return -ledgerSortDir;
+        return 0;
+      });
+
+      if (filtered.length === 0) {
+        tbody.innerHTML = `<tr><td colspan="8" style="text-align: center; color: var(--text-muted); padding: 20px;">No predictions recorded yet.</td></tr>`;
+        document.getElementById("ledger-page-info").innerText = "Page 1 of 1";
+        document.getElementById("ledger-prev").disabled = true;
+        document.getElementById("ledger-next").disabled = true;
+        return;
+      }
+
+      filtered.forEach((r, idx) => {
+        const row = document.createElement("tr");
+        row.className = "expand-trigger data-row";
+        row.onclick = () => toggleLedgerRow(r.node, r.predicted_at, idx);
+
+        const tsFmt = new Date(r.predicted_at).toLocaleTimeString();
+        const scorePct = (r.risk_score * 100).toFixed(1) + "%";
+        
+        let badgeCls = 'PENDING';
+        if (r.status) {
+          if (r.status.includes("True Positive")) badgeCls = "TRUE_POSITIVE";
+          else if (r.status.includes("False Positive")) badgeCls = "FALSE_POSITIVE";
+        }
+
+        const key = `${r.node}-${r.predicted_at}`;
+        const isExpanded = expandedRows.has(key);
+        const arrowClass = isExpanded ? "fa fa-chevron-down" : "fa fa-chevron-right";
+        const detailsDisplay = isExpanded ? "table-row" : "none";
+
+        const trigger_step = r.last_condition || r.last_alarm_condition || 'Trigger';
+        
+        // Extract expected stages: show multiple levels of predicted path
+        const expected_steps = (r.predicted_stages || []).map(s => s.condition).filter(c => c && c !== "UNKNOWN" && c !== "None" && c !== "N/A" && c !== trigger_step);
+        if (expected_steps.length === 0 && r.next_predicted && r.next_predicted !== "None" && r.next_predicted !== "N/A" && r.next_predicted !== trigger_step) {
+          expected_steps.push(r.next_predicted);
+        }
+
+        let observed_steps = (r.actual_path || []).filter(c => c && c !== "UNKNOWN" && c !== "None" && c !== "N/A" && c !== trigger_step);
+
+        // Calculate percentage of predicted path fulfilled
+        let fulfilled_pct = 0;
+        if (expected_steps.length > 0) {
+          let match_count = 0;
+          expected_steps.forEach(step => {
+            if (observed_steps.includes(step)) {
+              match_count++;
+            }
+          });
+          fulfilled_pct = Math.round((match_count / expected_steps.length) * 100);
+        }
+
+        const pathHtml = observed_steps.length > 0
+          ? observed_steps.map(step => `<span class="path-pill-small">${step}</span>`).join(' <i class="fa fa-caret-right" style="color:var(--text-muted); font-size:9px;"></i> ')
+          : '<span style="color:var(--text-muted); font-style:italic; font-size:11px;">No propagation</span>';
+
+        row.innerHTML = `
+          <td style="color: var(--bsnl-orange);"><i class="${arrowClass}" id="arrow-${idx}"></i></td>
+          <td><strong>${r.node}</strong></td>
+          <td>${tsFmt}</td>
+          <td>${scorePct}</td>
+          <td><span style="font-weight: 700;">${r.risk_level}</span></td>
+          <td><span class="status-pill ${badgeCls}">${badgeCls}</span></td>
+          <td>${r.estimated_ttf || "Stable"}</td>
+          <td>${pathHtml}</td>
+        `;
+        tbody.appendChild(row);
+
+        // Expandable details row
+        const detailsRow = document.createElement("tr");
+        detailsRow.id = `details-${idx}`;
+        detailsRow.className = "expandable-details";
+        detailsRow.style.display = detailsDisplay;
+
+        // Build feature importance for details
+        let featsHtml = "";
+        if (r.top_features) {
+          const maxContrib = Math.max(...r.top_features.map(f => Math.abs(f.contribution || 0)), 0.001);
+          r.top_features.slice(0, 3).forEach(f => {
+            const pct = Math.min(100, Math.abs((f.contribution || 0) / maxContrib) * 100);
+            featsHtml += `
+              <div class="feature-bar-row">
+                <span class="feature-name" style="font-size: 10px; width: 140px;">${f.feature}</span>
+                <div class="feature-bar-bg"><div class="feature-bar-fill" style="width: ${pct}%;"></div></div>
+                <span style="font-size: 10px;">${f.value.toFixed(1)}</span>
+              </div>
+            `;
+          });
+        }
+
+        // Correlation info block
+        let topoHtml = "";
+        if (r.topology_correlation && r.topology_correlation.correlated) {
+          topoHtml = `
+            <div style="margin-top: 8px; padding: 8px; border-radius: 6px; background: rgba(249, 115, 22, 0.1); border: 1px solid rgba(249, 115, 22, 0.3); font-size: 11px;">
+              🔗 <strong>Topology Correlation:</strong> Neighbor node <strong>${r.topology_correlation.root_cause_node}</strong> is in ${r.topology_correlation.neighbor_level} outage. Likely root cause of adjacent BGP/Link losses.
+            </div>
+          `;
+        }
+
+        // Verification outcome block
+        let outcomeHtml = "";
+        if (r.status && !r.status.includes('Pending')) {
+          outcomeHtml = `
+            <div style="font-size: 11px; margin-top: 6px; color: ${r.status.includes('True Positive') ? 'var(--color-low)' : 'var(--color-critical)'};">
+              ${r.status.includes('True Positive') 
+                ? '✅ Sequence forecast transition match observed — model correctly predicted the cascading alarm path.' 
+                : '❌ Failure occurred but sequence forecast did not match — mismatched sequence alert.'}
+            </div>
+          `;
+        } else {
+          outcomeHtml = `<div style="font-size:11px; color: var(--color-medium); margin-top: 6px;">⏳ Awaiting verification outcome window...</div>`;
+        }
+
+        // Construct expected flow nodes HTML
+        let forecastNodesHtml = `<span class="flow-node trigger" title="Initial trigger state">${trigger_step}</span>`;
+        if (expected_steps.length > 0) {
+          expected_steps.forEach((step, idx) => {
+            const stageObj = (r.predicted_stages || []).find(s => s.condition === step);
+            const probPct = stageObj ? (stageObj.prob * 100).toFixed(0) + "%" : (idx === 0 ? ((r.next_prob || 0.8) * 100).toFixed(0) + "%" : "60%");
+            forecastNodesHtml += `
+              <span class="flow-edge-prob" title="Transition probability">${probPct}</span>
+              <span class="flow-node predicted" title="Predicted next state (${probPct})">${step}</span>
+            `;
+          });
+        } else {
+          forecastNodesHtml += `
+            <span class="flow-edge-prob" title="Transition probability">0%</span>
+            <span class="flow-node predicted" style="opacity: 0.5;">None</span>
+          `;
+        }
+
+        // Construct observed flow nodes HTML
+        let observedNodesHtml = `<span class="flow-node trigger" title="Initial trigger state">${trigger_step}</span>`;
+        if (observed_steps.length > 0) {
+          observed_steps.forEach((step, idx) => {
+            observedNodesHtml += `
+              <span class="flow-edge-arrow"><i class="fa fa-arrow-right"></i></span>
+              <span class="flow-node actual" title="Observed failure state">${step}</span>
+            `;
+          });
+        } else {
+          observedNodesHtml += `
+            <span class="flow-edge-arrow"><i class="fa fa-arrow-right"></i></span>
+            <span class="flow-node actual" style="opacity: 0.5; border-color: var(--border); color: var(--text-muted);">None</span>
+          `;
+        }
+
+        detailsRow.innerHTML = `
+          <td colspan="8">
+            <div class="ledger-details-grid">
+              <div class="ledger-details-section">
+                <div class="ledger-details-title">Telemetry at Prediction</div>
+                <div style="font-size: 11px;">
+                  <div>Total Alarms in Window: <strong>${r.window_alarms || 0}</strong></div>
+                  <div style="margin-top: 4px;">Critical Alarms: <strong style="color: var(--color-critical);">${r.critical_alarms || 0}</strong></div>
+                  <div>Major Alarms: <strong style="color: var(--color-high);">${r.major_alarms || 0}</strong></div>
+                  <div>Minor Alarms: <strong style="color: var(--bsnl-blue);">${r.minor_alarms || 0}</strong></div>
+                </div>
+              </div>
+              <div class="ledger-details-section">
+                <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px;">
+                  <div class="ledger-details-title" style="margin-bottom: 0;">Markov Sequence Forecast</div>
+                  <span class="status-pill" style="background: ${fulfilled_pct === 100 ? 'rgba(46, 125, 50, 0.2)' : 'rgba(249, 115, 22, 0.1)'}; color: ${fulfilled_pct === 100 ? 'var(--color-low)' : 'var(--bsnl-orange)'}; font-size: 9px; font-weight: 800; border: 1px solid ${fulfilled_pct === 100 ? 'rgba(46, 125, 50, 0.4)' : 'rgba(249, 115, 22, 0.3)'};">
+                    ${fulfilled_pct}% Path Fulfilled
+                  </span>
+                </div>
+                <div class="transition-flow">
+                  <div class="flow-path">
+                    <span class="flow-label">Forecast Path</span>
+                    <div class="flow-nodes">
+                      ${forecastNodesHtml}
+                    </div>
+                  </div>
+                  <div class="flow-path" style="margin-top: 8px;">
+                    <span class="flow-label">Observed Path</span>
+                    <div class="flow-nodes">
+                      ${observedNodesHtml}
+                    </div>
+                  </div>
+                </div>
+              </div>
+              <div class="ledger-details-section" style="grid-column: span 2;">
+                <div class="ledger-details-title">Verification Outcome & Features</div>
+                ${featsHtml}
+                ${topoHtml}
+                ${outcomeHtml}
+              </div>
+            </div>
+          </td>
+        `;
+        tbody.appendChild(detailsRow);
+      });
+
+      document.getElementById("ledger-page-info").innerText = `Page ${currentPage} of ${totalPages}`;
+      document.getElementById("ledger-prev").disabled = currentPage === 1;
+      document.getElementById("ledger-next").disabled = currentPage === totalPages;
+    }
+
+    function toggleLedgerRow(node, predictedAt, idx) {
+      const key = `${node}-${predictedAt}`;
+      const details = document.getElementById(`details-${idx}`);
+      const arrow = document.getElementById(`arrow-${idx}`);
+      
+      if (expandedRows.has(key)) {
+        expandedRows.delete(key);
+        if (details) details.style.display = "none";
+        if (arrow) arrow.className = "fa fa-chevron-right";
+      } else {
+        expandedRows.add(key);
+        if (details) details.style.display = "table-row";
+        if (arrow) arrow.className = "fa fa-chevron-down";
+      }
+    }
+
+    function filterLedger(filter) {
+      ledgerFilter = filter;
+      
+      document.querySelectorAll(".ledger-panel button[id^='ledger-filter-']").forEach(btn => {
+        btn.classList.remove("active");
+      });
+      const tabId = filter === 'ALL' ? 'all' : (filter === 'TRUE_POSITIVE' ? 'tp' : (filter === 'FALSE_POSITIVE' ? 'fp' : 'pending'));
+      document.getElementById(`ledger-filter-${tabId}`).classList.add("active");
+      
+      ledgerPage = 1;
+      fetchLedger();
+    }
+
+    function sortLedger(key) {
+      if (ledgerSortKey === key) ledgerSortDir *= -1;
+      else { ledgerSortKey = key; ledgerSortDir = -1; }
+      fetchLedger();
+    }
+
+    function prevLedgerPage() { if (ledgerPage > 1) { ledgerPage--; fetchLedger(); } }
+    function nextLedgerPage() { ledgerPage++; fetchLedger(); }
+
+    // ── Sandbox REST Actions ──
+    function startFullSimulation() {
+      const btn = document.getElementById("play-sim-btn");
+      btn.disabled = true;
+      btn.innerHTML = `<i class="fa fa-spinner fa-spin"></i> Starting...`;
+      
+      fetch(`${API}/api/sim/restart`, { method: "POST" })
+        .then(res => res.json())
+        .then(data => {
+          btn.disabled = false;
+          btn.innerHTML = `<i class="fa fa-play"></i> Play Simulation (All Alarms)`;
+          console.log("Full sim started:", data);
+        })
+        .catch(err => {
+          btn.disabled = false;
+          btn.innerHTML = `<i class="fa fa-play"></i> Play Simulation (All Alarms)`;
+          alert("Failed to start full simulation: " + err.message);
+        });
+    }
+
+    function startScenario() {
+      const btn = document.getElementById("play-scenario-btn");
+      btn.disabled = true;
+      btn.innerHTML = `<i class="fa fa-spinner fa-spin"></i> Starting...`;
+
+      fetch(`${API}/api/sim/scenario`, { method: "POST" })
+        .then(res => res.json())
+        .then(data => {
+          btn.disabled = false;
+          btn.innerHTML = `<i class="fa fa-route"></i> Play Gradual Scenario (Demo)`;
+          console.log("Scenario started:", data);
+        })
+        .catch(err => {
+          btn.disabled = false;
+          btn.innerHTML = `<i class="fa fa-route"></i> Play Gradual Scenario (Demo)`;
+          alert("Failed to start scenario: " + err.message);
+        });
+    }
+
+    function resetPredictor() {
+      if (!confirm("Are you sure you want to reset the sandbox? This clears all windows and risk scores.")) return;
+      fetch(`${API}/api/sim/reset`, { method: "POST" })
+        .then(res => res.json())
+        .then(data => {
+          nodesMap.clear();
+          feedAlarms = [];
+          llmSummaries.clear();
+          expandedRows.clear();
+          renderFeed();
+          updateWarningsList();
+          updateTopologyGraph();
+          fetchLedger();
+          document.getElementById("sim-clock-val").innerText = "SYSTEM IDLE";
+          console.log("Sim reset complete:", data);
+        })
+        .catch(err => alert("Reset failed: " + err.message));
+    }
+
+    function changeSpeed(ms) {
+      fetch(`${API}/api/sim/speed`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ sleep_ms: parseInt(ms) })
+      });
+    }
+
+    function applyTestSplit() {
+      const testSize = parseFloat(document.getElementById("split-select").value);
+      const btn = document.getElementById("apply-split-btn");
+      const statusEl = document.getElementById("split-status");
+      btn.disabled = true;
+      btn.innerHTML = `<i class="fa fa-spinner fa-spin"></i> Retraining...`;
+      statusEl.innerText = "Retraining model on selected split — this may take 30–60s...";
+      statusEl.style.color = "var(--color-medium)";
+
+      fetch(`${API}/api/sim/repartition`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ test_size: testSize })
+      })
+      .then(res => res.json())
+      .then(data => {
+        btn.disabled = false;
+        btn.innerHTML = `<i class="fa fa-gears"></i> Apply & Retrain`;
+        if (data.status === "ok") {
+          statusEl.innerText = `✅ Retrained! Model: ${data.model} | AUC: ${data.roc_auc.toFixed(4)} | Train: ${data.train_samples} | Test: ${data.test_samples}`;
+          statusEl.style.color = "var(--color-low)";
+          fetchLedger();
+        } else {
+          statusEl.innerText = `⚠ ${data.message || 'Repartition failed'}`;
+          statusEl.style.color = "var(--color-critical)";
+        }
+      })
+      .catch(err => {
+        btn.disabled = false;
+        btn.innerHTML = `<i class="fa fa-gears"></i> Apply & Retrain`;
+        statusEl.innerText = `❌ Error: ${err.message}`;
+        statusEl.style.color = "var(--color-critical)";
+      });
+    }
+
+    function handleCustomDataUpload(event) {
+      const file = event.target.files[0];
+      if (!file) return;
+
+      const statusEl = document.getElementById("upload-status");
+      statusEl.innerText = "⏳ Uploading and processing telemetry JSON...";
+      statusEl.style.color = "var(--color-medium)";
+
+      const formData = new FormData();
+      formData.append("file", file);
+
+      fetch(`${API}/api/sim/upload`, {
+        method: "POST",
+        body: formData
+      })
+      .then(res => res.json())
+      .then(data => {
+        if (data.status === "ok") {
+          statusEl.innerText = `✅ Loaded custom dataset: ${data.total_alarms.toLocaleString()} alarms. Click ▶ Play Simulation to test the pre-trained model.`;
+          statusEl.style.color = "var(--color-low)";
+          fetchLedger();
+        } else {
+          statusEl.innerText = `❌ Upload failed: ${data.message}`;
+          statusEl.style.color = "var(--color-critical)";
+        }
+      })
+      .catch(err => {
+        statusEl.innerText = `❌ Error: ${err.message}`;
+        statusEl.style.color = "var(--color-critical)";
+      });
+    }
+
+    function injectAlarm(condition, severity, category) {
+      const node = document.getElementById("sandbox-node").value;
+      fetch(`${API}/api/ingest`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ node, condition, severity, category })
+      })
+      .then(res => res.json())
+      .then(data => {
+        console.log("Injected alarm:", data);
+        fetchLedger();
+      })
+      .catch(err => alert("Failed to inject alarm: " + err.message));
+    }
+
+    // ── Helper Utilities ──
+    function fetchEvents() {
+      fetch(`${API}/api/events?page=1&limit=50`)
+        .then(res => res.json())
+        .then(data => {
+          if (data.events) {
+            feedAlarms = data.events;
+            renderFeed();
+          }
+        });
+    }
+
+    function formatTimeAgo(isoString) {
+      if (!isoString) return "just now";
+      const date = new Date(isoString);
+      const seconds = Math.floor((new Date() - date) / 1000);
+      
+      let interval = Math.floor(seconds / 31536000);
+      if (interval >= 1) return interval + "y ago";
+      interval = Math.floor(seconds / 2592000);
+      if (interval >= 1) return interval + "mo ago";
+      interval = Math.floor(seconds / 86400);
+      if (interval >= 1) return interval + "d ago";
+      interval = Math.floor(seconds / 3600);
+      if (interval >= 1) return interval + "h ago";
+      interval = Math.floor(seconds / 60);
+      if (interval >= 1) return interval + "m ago";
+      return seconds < 10 ? "just now" : Math.floor(seconds) + "s ago";
+    }
+
+    function showAlarmDetailsModal(alarm) {
+      alert(JSON.stringify(alarm, null, 2));
+    }
+
+    // ── On Page Load Initialization ──
+    window.addEventListener("load", () => {
+      initSockets();
+      initTopologyGraph();
     });
-    if (!res.ok) {
-      const errText = await res.text();
-      throw new Error(errText || `Server error (status ${res.status})`);
-    }
-    const data = await res.json();
-    statusEl.textContent = `✅ Loaded custom dataset: ${data.total_alarms.toLocaleString()} alarms. Click ▶ Play Simulation (All Alarms) to test the pre-trained model on this dataset.`;
-    statusEl.style.color = 'var(--low)';
-    
-    // Update timeline display in UI
-    if (data.dataset_start) {
-      document.getElementById('ds-start').textContent = formatDatasetDate(data.dataset_start);
-    }
-    if (data.dataset_end) {
-      document.getElementById('ds-end').textContent = formatDatasetDate(data.dataset_end);
-    }
-    if (data.dataset_duration) {
-      document.getElementById('ds-duration').textContent = data.dataset_duration;
-    }
-    
-    // Enable simulation play buttons immediately for testing custom data
-    const playSimBtn = document.getElementById('play-sim-btn');
-    if (playSimBtn) playSimBtn.disabled = false;
-    const playScenarioBtn = document.getElementById('play-scenario-btn');
-    if (playScenarioBtn) playScenarioBtn.disabled = false;
-
-    // Reset ledger UI since we are on a new custom dataset
-    renderLedger({ resolved: [], pending: [], total_predictions: 0, true_positives: 0, false_positives: 0, pending_count: 0, precision: null });
-    
-  } catch (err) {
-    statusEl.textContent = `❌ Upload failed: ${err.message}`;
-    statusEl.style.color = 'var(--critical)';
-  }
-}
-
-// ── Prediction Verification Ledger — full state ──────────────────────
-let _ledgerData    = null;
-let _ledgerFilter  = 'all';
-let _ledgerSortKey = 'predicted_at';
-let _ledgerSortDir = -1;  // -1 = newest first
-let _expandedRows  = new Set();
-
-function setLedgerFilter(f, el) {
-  _ledgerFilter = f;
-  document.querySelectorAll('.ltab').forEach(t => t.classList.remove('active'));
-  el.classList.add('active');
-  if (_ledgerData) _drawLedgerTable(_ledgerData);
-}
-
-function sortLedger(key) {
-  if (_ledgerSortKey === key) _ledgerSortDir *= -1;
-  else { _ledgerSortKey = key; _ledgerSortDir = -1; }
-  if (_ledgerData) _drawLedgerTable(_ledgerData);
-}
-
-function clearLedgerView() {
-  _expandedRows.clear();
-  if (_ledgerData) _drawLedgerTable(_ledgerData);
-}
-
-function renderLedger(data) {
-  _ledgerData = data;
-  const tp    = data.true_positives  ?? 0;
-  const fp    = data.false_positives ?? 0;
-  const pend  = data.pending_count   ?? (data.pending?.length ?? 0);
-  const total = data.total_predictions ?? 0;
-  const prec  = data.precision;
-
-  document.getElementById('lm-tp').textContent    = tp;
-  document.getElementById('lm-fp').textContent    = fp;
-  document.getElementById('lm-pend').textContent  = pend;
-  document.getElementById('lm-total').textContent = total;
-
-  // Precision gauge ring
-  const precPct = prec != null ? prec * 100 : null;
-  document.getElementById('lm-precision').textContent = precPct != null ? precPct.toFixed(1) + '%' : '—';
-  const circ = 2 * Math.PI * 15; // r=15
-  const arc  = document.getElementById('prec-ring-arc');
-  if (arc) arc.setAttribute('stroke-dasharray', precPct != null ? `${(precPct / 100) * circ} ${circ}` : `0 ${circ}`);
-
-  // Avg elapsed time
-  const resolved = data.resolved || [];
-  const withElapsed = resolved.filter(r => r.elapsed_mins != null);
-  const avgE = withElapsed.length ? (withElapsed.reduce((s, r) => s + r.elapsed_mins, 0) / withElapsed.length).toFixed(1) : '—';
-  document.getElementById('lm-avg-elapsed').textContent = avgE === '—' ? '—' : avgE + 'm';
-
-  _drawLedgerTable(data);
-}
-
-function _drawLedgerTable(data) {
-  const pending  = (data.pending  || []).map(r => ({ ...r, _isPending: true }));
-  const resolved = [...(data.resolved || [])].reverse();
-
-  let allRows = [...pending, ...resolved];
-
-  // Filter
-  if (_ledgerFilter === 'pending') allRows = allRows.filter(r => r._isPending);
-  else if (_ledgerFilter === 'tp')  allRows = allRows.filter(r => (r.status || '').includes('True'));
-  else if (_ledgerFilter === 'fp')  allRows = allRows.filter(r => (r.status || '').includes('False'));
-
-  // Sort
-  allRows.sort((a, b) => {
-    let va = a[_ledgerSortKey] ?? '', vb = b[_ledgerSortKey] ?? '';
-    if (_ledgerSortKey === 'risk_score' || _ledgerSortKey === 'elapsed_mins') {
-      va = parseFloat(va) || 0; vb = parseFloat(vb) || 0;
-    }
-    if (va < vb) return _ledgerSortDir;
-    if (va > vb) return -_ledgerSortDir;
-    return 0;
-  });
-
-  const tbody = document.getElementById('ledger-body');
-  if (allRows.length === 0) {
-    tbody.innerHTML = `<tr><td colspan="11" class="ledger-empty">
-      <div class="ledger-empty-icon">🔮</div>
-      <strong>No predictions match this filter</strong>
-      <p>Start the simulation — predictions appear here as the model detects high-risk nodes.</p>
-    </td></tr>`;
-    return;
-  }
-
-  const rows = allRows.map((r, idx) => {
-    const id      = `lr-${idx}`;
-    const st      = r.status || '';
-    let badgeCls  = 'pend';
-    if (st.includes('True'))  badgeCls = 'tp';
-    if (st.includes('False')) badgeCls = 'fp';
-
-    const lvl      = r.risk_level || '';
-    const scoreNum = parseFloat(r.risk_score) || 0;
-    const score    = (scoreNum * 100).toFixed(1);
-    const scoreCol = scoreNum >= 0.75 ? '#ff4d4f' : '#fa8c16';
-    const predAt   = r.predicted_at ? r.predicted_at.replace('T',' ').substring(0,19) : '—';
-    const resAt    = r.resolution_time ? r.resolution_time.replace('T',' ').substring(0,19) : '—';
-    const elapsed  = r.elapsed_mins != null ? r.elapsed_mins + 'm' : (r._isPending ? 'Active…' : '—');
-    const ttf      = r.estimated_ttf || 'Stable';
-    const wAlarms  = r.window_alarms ?? '—';
-    const wCrit    = r.critical_alarms ?? 0;
-    const wMaj     = r.major_alarms ?? 0;
-    const wMin     = r.minor_alarms ?? 0;
-    const lastCond = (r.last_condition || '—').replace(/_/g,' ');
-    const lastCondShort = lastCond.substring(0, 28);
-    const nextP    = r.next_predicted || 'N/A';
-    const nextProb = r.next_prob != null ? Math.round(r.next_prob * 100) : 0;
-    const eta      = formatETA(r.scored_at || r.predicted_at, ttf);
-    const isOpen   = _expandedRows.has(id);
-
-    const rowBg = r._isPending
-      ? 'background: rgba(250,219,20,.04);'
-      : (badgeCls === 'tp' ? 'background: rgba(82,196,26,.03);' : '');
-
-    // ── Topology correlation ──
-    const topo = r.topology_correlation;
-    const topoHtml = (topo && topo.correlated)
-      ? `<div style="margin-top:10px;padding:8px 10px;border-radius:6px;background:rgba(250,140,22,.08);border:1px solid rgba(250,140,22,.25);font-size:11px;color:var(--high);line-height:1.5;">
-           🔗 <strong>Topology Correlation:</strong> Neighbor node <strong>${shortNode(topo.root_cause_node)}</strong>
-           is currently down (<strong>${topo.neighbor_level}</strong> outage). Highly probable root cause of adjacent BGP/Link losses on this node.
-         </div>`
-      : '';
-
-    // ── Feature importance bars ──
-    const topFeats = r.top_features || [];
-    const maxContrib = Math.max(...topFeats.map(f => Math.abs(f.contribution || 0)), 0.001);
-    const featHtml = topFeats.length === 0
-      ? '<em style="color:var(--muted);font-size:10px;">No feature data captured</em>'
-      : topFeats.map(f => {
-          const pct = Math.min(100, Math.abs((f.contribution || 0) / maxContrib) * 100);
-          const col = pct > 60 ? '#ff4d4f' : pct > 30 ? '#fa8c16' : '#58a6ff';
-          return `<div class="feat-bar-row">
-            <span class="feat-name" title="${f.feature}">${f.feature.replace(/_/g,' ')}</span>
-            <div class="feat-bar-wrap"><div class="feat-bar-fill" style="width:${pct.toFixed(1)}%;background:${col};"></div></div>
-            <span class="feat-val">${f.value}</span>
-          </div>`;
-        }).join('');
-
-    // ── Verification outcome block ──
-    const verificationHtml = r.resolved
-      ? `<div style="margin-top:10px;padding:10px;border-radius:6px;background:${badgeCls==='tp' ? 'rgba(82,196,26,.08)' : 'rgba(255,77,79,.08)'};border:1px solid ${badgeCls==='tp' ? 'rgba(82,196,26,.3)' : 'rgba(255,77,79,.3)'};">
-           <div style="font-size:13px;font-weight:700;margin-bottom:6px;">${st}</div>
-           <div style="font-size:11px;line-height:1.7;color:var(--muted);">
-             <div>Resolved at: <strong style="color:var(--text);">${resAt}</strong></div>
-             <div>Time elapsed: <strong style="color:var(--text);">${elapsed}</strong></div>
-             <div style="margin-top:6px;color:${badgeCls==='tp' ? 'var(--low)' : 'var(--critical)'};">
-               ${badgeCls==='tp'
-                 ? (st.includes('Seq') 
-                    ? '✅ Sequence forecast transition match observed — model correctly predicted the cascading alarm path.'
-                    : '✅ The node experienced ≥3 CRITICAL alarms — confirmed failure event.')
-                 : '❌ Failure occurred but the sequence forecast did not match — mismatched sequence alert.'}
-             </div>
-           </div>
-         </div>`
-      : `<div style="margin-top:10px;padding:10px;border-radius:6px;background:rgba(250,219,20,.06);border:1px solid rgba(250,219,20,.25);font-size:11px;color:var(--medium);">
-           ⏳ <strong>Awaiting outcome</strong> — actively watching for sequence transition match or failure…
-         </div>`;
-
-    // ── MAIN TABLE ROW ──
-    const mainRow = `<tr class="data-row" id="${id}" style="cursor:pointer;${rowBg}" onclick="toggleLedgerRow('${id}')">
-      <td style="font-family:monospace;font-weight:700;font-size:11px;">
-        ${r._isPending ? '<span style="display:inline-block;width:6px;height:6px;border-radius:50%;background:#fadb14;margin-right:5px;animation:pulse 1.5s infinite;"></span>' : ''}
-        ${shortNode(r.node || '')}
-      </td>
-      <td style="color:var(--muted);font-family:monospace;font-size:10px;">${predAt}</td>
-      <td>
-        <div class="score-bar-wrap">
-          <span style="font-weight:700;color:${scoreCol};font-size:12px;">${score}%</span>
-          <div class="score-bar"><div class="score-fill" style="width:${score}%;background:${scoreCol};"></div></div>
-        </div>
-      </td>
-      <td><span class="risk-chip ${lvl}">${lvl}</span></td>
-      <td><span class="badge ${badgeCls}">${st}</span></td>
-      <td style="font-size:10px;color:${ttf.includes('Immediate') ? 'var(--critical)' : 'var(--muted)'};font-weight:${ttf.includes('Immediate')?'700':'400'};">${ttf}</td>
-      <td style="font-size:10px;">
-        <span title="${wCrit} CRITICAL, ${wMaj} MAJOR, ${wMin} MINOR" style="cursor:help;">
-          ${wAlarms} alarms
-          ${wCrit>0 ? `<span style="color:var(--critical);font-weight:700;"> (${wCrit}🔴)</span>` : ''}
-        </span>
-      </td>
-      <td style="font-size:10px;color:var(--muted);max-width:140px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;" title="${r.last_condition||''}">${lastCondShort}</td>
-      <td style="font-size:10px;color:${r._isPending ? 'var(--medium)' : 'var(--muted)'};">${elapsed}</td>
-      <td style="font-family:monospace;font-size:10px;color:var(--muted);">${resAt}</td>
-      <td style="text-align:center;color:var(--muted);font-size:12px;">${isOpen ? '▲' : '▼'}</td>
-    </tr>`;
-
-    // ── EXPANDED DETAIL ROW ──
-    if (!isOpen) return mainRow;
-
-    const detailRow = `<tr class="detail-row" id="${id}-detail">
-      <td colspan="11">
-        <div class="detail-inner" style="gap:16px;">
-
-          <!-- LEFT: Full Forecast Block & Telemetry -->
-          <div class="detail-section" style="min-width:320px;max-width:500px;">
-            <h4>🔮 Forecast (Strictly For Diagnosis)</h4>
-            <div style="background:rgba(88,166,255,.06);border:1px solid rgba(88,166,255,.2);border-left:3px solid ${scoreCol};border-radius:8px;padding:12px 14px;margin-top:6px;margin-bottom:14px;">
-              <div style="font-size:12px;font-weight:700;color:${scoreCol};margin-bottom:6px;">
-                ${nextP !== 'N/A' && nextP !== 'None' ? nextP : (r.risk_level)} IMMINENT
-              </div>
-              <div style="font-size:11px;margin-bottom:8px;line-height:1.5;">
-                ⚠️ Imminent Event: Node <strong>${shortNode(r.node)}</strong> is predicted to receive a critical
-                <strong>${nextP}</strong> alarm with <strong>${nextProb}%</strong> transition confidence.
-              </div>
-              <div style="border-top:1px solid rgba(255,255,255,.08);padding-top:8px;font-size:11px;color:var(--muted);line-height:2;">
-                <strong style="display:block;margin-bottom:4px;color:var(--text);">Sequence Forecast Details:</strong>
-                • Imminent Forecasted Alarm: <strong style="color:var(--accent);">${nextP}</strong><br/>
-                • Sequence Probability: <strong style="color:var(--accent);">${nextProb}%</strong><br/>
-                • Predicted Transition Path: <code style="background:#21262d;padding:1px 5px;border-radius:3px;">${r.last_condition||'N/A'}</code>
-                  ➜ ${(r.predicted_stages && r.predicted_stages.length > 0)
-                    ? r.predicted_stages.map(s => `<code style="background:#21262d;padding:1px 5px;border-radius:3px;color:var(--accent);">${s.condition} (${Math.round(s.prob*100)}%)</code>`).join(' ➜ ')
-                    : `<code style="background:#21262d;padding:1px 5px;border-radius:3px;color:var(--accent);">${nextP} (${nextProb}%)</code>`
-                  }<br/>
-                • Actual Path Occurred: ${(r.actual_path && r.actual_path.length > 0)
-                  ? r.actual_path.map(cond => `<code style="background:#21262d;padding:1px 5px;border-radius:3px;">${cond}</code>`).join(' ➜ ')
-                  : `<code style="background:#21262d;padding:1px 5px;border-radius:3px;">${r.last_condition||'N/A'}</code>`
-                }<br/>
-                • Predicted Time to Breach: <strong>in ${ttf}</strong>${eta !== 'Stable' && eta !== 'N/A' ? ` (ETA: <strong>${eta}</strong>)` : ''}<br/>
-                • Network Failure Risk Level: <strong class="ttf-label ${lvl}">${lvl} (${score}%)</strong>
-              </div>
-              ${topoHtml}
-            </div>
-
-            <h4>📡 Cisco Telemetry (at Prediction)</h4>
-            <div style="margin-top:6px;max-height:260px;overflow-y:auto;background:transparent;padding-right:4px;">${
-              r.recent_alarms_raw && r.recent_alarms_raw.length > 0
-                ? r.recent_alarms_raw.map((a, i) => formatCiscoAlarm(a, i)).join('')
-                : '<em style="color:var(--muted);">No cisco telemetry captured</em>'
-            }</div>
-          </div>
-
-          <!-- MIDDLE: Feature Importance -->
-          <div class="detail-section" style="min-width:240px;">
-            <h4>📈 Top Driving Features</h4>
-            <div style="margin-top:6px;">${featHtml}</div>
-            <div style="margin-top:10px;">
-              <h4 style="margin-bottom:6px;">📊 Alarm Breakdown at Prediction</h4>
-              <div style="font-size:10px;line-height:2;color:var(--muted);">
-                🔴 Critical: <strong style="color:var(--critical);">${wCrit}</strong> &nbsp;
-                🟠 Major: <strong style="color:var(--high);">${wMaj}</strong> &nbsp;
-                🟡 Minor/Warn: <strong style="color:var(--medium);">${wMin}</strong><br/>
-                Total in window: <strong style="color:var(--text);">${wAlarms}</strong>
-              </div>
-            </div>
-          </div>
-
-          <!-- RIGHT: Verification Outcome -->
-          <div class="detail-section" style="min-width:220px;">
-            <h4>✅ Verification Outcome</h4>
-            ${verificationHtml}
-            <div style="margin-top:10px;font-size:10px;color:var(--muted);line-height:1.7;">
-              <div>Prediction horizon: <strong style="color:var(--text);">${r.horizon_mins||120} min</strong></div>
-              <div>Predicted at: <strong style="color:var(--text);font-family:monospace;">${predAt}</strong></div>
-              ${r.resolution_time ? `<div>Resolved at: <strong style="color:var(--text);font-family:monospace;">${resAt}</strong></div>` : ''}
-            </div>
-          </div>
-
-        </div>
-      </td>
-    </tr>`;
-
-    return mainRow + detailRow;
-  }).join('');
-
-  tbody.innerHTML = rows;
-}
-
-function toggleLedgerRow(id) {
-  if (_expandedRows.has(id)) _expandedRows.delete(id);
-  else _expandedRows.add(id);
-  if (_ledgerData) _drawLedgerTable(_ledgerData);
-}
-
-connect();
-
-async function initDashboard() {
-  try {
-    const [sum, nodes, warn, ledger] = await Promise.all([
-      fetch(`${API}/api/summary`).then(r=>r.json()),
-      fetch(`${API}/api/nodes`).then(r=>r.json()),
-      fetch(`${API}/api/warnings`).then(r=>r.json()),
-      fetch(`${API}/api/predictions/verification`).then(r=>r.json()),
-    ]);
-    renderSummary(sum);
-    renderNodes(nodes);
-    renderWarnings(warn);
-    renderLedger(ledger);
-    renderProgress(sum.sim_ingested || 0, sum.sim_total || 0);
-    updateClock(sum.sim_time, sum.sim_running);
-  } catch {}
-}
-initDashboard();
-
-// Also poll /api/summary every 5s as fallback
-setInterval(async () => {
-  try {
-    const [sum, nodes, warn] = await Promise.all([
-      fetch(`${API}/api/summary`).then(r=>r.json()),
-      fetch(`${API}/api/nodes`).then(r=>r.json()),
-      fetch(`${API}/api/warnings`).then(r=>r.json()),
-    ]);
-    renderSummary(sum);
-    renderNodes(nodes);
-    renderWarnings(warn);
-    renderProgress(sum.sim_ingested || 0, sum.sim_total || 0);
-    updateClock(sum.sim_time, sum.sim_running);
-  } catch {}
-}, 5000);
-
-// Poll verification ledger every 3s
-setInterval(async () => {
-  try {
-    const ledger = await fetch(`${API}/api/predictions/verification`).then(r => r.json());
-    renderLedger(ledger);
-  } catch {}
-}, 3000);
-</script>
+  </script>
 </body>
 </html>
