@@ -120,8 +120,7 @@ async def broadcast_llm_summary(payload: dict):
         # Dispatch LLM summary to Telegram
         try:
             import telegram_notifier
-            msg = telegram_notifier.format_llm_summary(payload)
-            telegram_notifier.queue_message(msg)
+            telegram_notifier.queue_event("LLM_INSIGHT", payload, payload.get("timestamp", ""))
         except Exception as te:
             print(f"[telegram] Failed to queue LLM summary: {te}")
     except Exception as e:

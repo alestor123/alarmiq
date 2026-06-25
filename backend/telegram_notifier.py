@@ -42,6 +42,20 @@ def queue_message(text: str, parse_mode: str = "HTML"):
             {"text": text, "parse_mode": parse_mode}
         )
 
+async def _process_and_send_event(event_type: str, rec: dict, ts_str: str):
+    import llm_summarizer
+    msg_text = await llm_summarizer.generate_telegram_message(event_type, rec, ts_str)
+    if msg_text:
+        queue_message(msg_text)
+
+def queue_event(event_type: str, rec: dict, ts_str: str):
+    global _event_loop
+    if _event_loop:
+        _event_loop.call_soon_threadsafe(
+            _event_loop.create_task,
+            _process_and_send_event(event_type, rec, ts_str)
+        )
+
 async def _send_message_api(chat_id: int, text: str, parse_mode: str = "HTML"):
     url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
     payload = {
@@ -120,129 +134,6 @@ def init_telegram(loop):
     loop.create_task(poll_telegram_updates())
     loop.create_task(message_sender_loop())
 
-# ── Message Formatting ────────────────────────────────────────────────────────
+# Hardcoded string formats removed; using Ollama for dynamic generation.
 
-def format_new_prediction(rec: dict, ts: datetime) -> str:
-    node = rec.get("node", "UNKNOWN")
-    score = rec.get("risk_score", 0.0)
-    level = rec.get("risk_level", "HIGH")
-    score_pct = round(score * 100, 1)
-    crit = rec.get("critical_alarms", 0)
-    maj = rec.get("major_alarms", 0)
-    w_total = rec.get("window_alarms", 0)
-    ttf = rec.get("estimated_ttf", "Stable")
-    last_c = rec.get("last_condition", "N/A")
-    next_c = rec.get("next_predicted", "N/A")
-    next_p = rec.get("next_prob", 0.0)
-    pred_stages = rec.get("predicted_stages", [])
-    topo = rec.get("topology_correlation", {})
-    
-    msg = (
-        f"🚨 <b>CRITICAL RISK DETECTED ON NODE:</b>\n"
-        f"   ➜ <code>{node}</code>\n\n"
-        f"📊 <b>Current Status:</b>\n"
-        f"   • Risk Score: <b>{score_pct}% ({level})</b>\n"
-        f"   • Window Load: {w_total} alarms ({crit} CRIT, {maj} MAJ)\n"
-        f"   • Est. TTF: <b>{ttf}</b>\n\n"
-        f"🔮 <b>Sequence Forecast:</b>\n"
-    )
-    if pred_stages:
-        path_parts = [last_c] + [f"{s['condition']} ({round(s['prob']*100)}%)" for s in pred_stages]
-        path_str = " ➜ ".join(path_parts)
-        msg += f"   {path_str}\n"
-    else:
-        msg += f"   {last_c} ➜ {next_c} ({round(next_p*100)}% conf)\n"
-        
-    if topo.get("correlated"):
-        msg += f"\n🌐 <b>Topology Correlation:</b>\n   Root cause likely: <code>{topo.get('root_cause_node', '?')}</code>\n"
-        
-    msg += (
-        f"\n🛠 <b>Action Plan:</b>\n"
-        f"   1. SSH to device:\n"
-        f"      <code>sshadmin@{node}</code>\n"
-        f"   2. Pull interface diagnostic:\n"
-        f"      <code>show interfaces summary | include down</code>\n"
-        f"   3. Check routing adjacency status:\n"
-        f"      <code>show bgp neighbors | show ospf neighbor</code>"
-    )
-    return msg
-
-def format_true_positive(rec: dict, ts: datetime) -> str:
-    node = rec.get("node", "UNKNOWN")
-    elapsed = rec.get("elapsed_mins", 0)
-    res_time = rec.get("resolution_time", "")
-    actual = rec.get("actual_path", [])
-    pred_at = rec.get("predicted_at", "")
-    ttf = rec.get("estimated_ttf", "N/A")
-    
-    msg = (
-        f"✅ <b>FAILURE PREDICTION CONFIRMED (TP)</b>\n"
-        f"   Node: <code>{node}</code>\n\n"
-        f"📈 <b>Incident Timeline:</b>\n"
-        f"   • Predicted At: {pred_at}\n"
-        f"   • Failure At:   {res_time}\n"
-        f"   • Time-to-fail: <b>{elapsed} minutes</b> (model predicted {ttf})\n"
-    )
-    if actual:
-        path_str = " ➜ ".join(actual)
-        msg += f"\n🔗 <b>Observed Precursor Sequence:</b>\n   {path_str}\n"
-        
-    msg += (
-        f"\n🛠 <b>Post-Mortem Next Steps:</b>\n"
-        f"   1. Confirm traffic has rerouted successfully\n"
-        f"   2. File incident ticket with timeline above\n"
-        f"   3. Pull tech-support log file for RCA:\n"
-        f"      <code>show tech-support</code>"
-    )
-    return msg
-
-def format_false_positive(rec: dict, ts: datetime) -> str:
-    node = rec.get("node", "UNKNOWN")
-    elapsed = rec.get("elapsed_mins", 0)
-    res_time = rec.get("resolution_time", "")
-    actual = rec.get("actual_path", [])
-    pred_at = rec.get("predicted_at", "")
-    score = rec.get("risk_score", 0.0)
-    score_pct = round(score * 100, 1)
-    
-    msg = (
-        f"ℹ️ <b>ALERT AUTO-EXPIRED (FALSE POSITIVE)</b>\n"
-        f"   Node: <code>{node}</code>\n\n"
-        f"📉 <b>Summary Details:</b>\n"
-        f"   • Sent At:    {pred_at}\n"
-        f"   • Expired At: {res_time}\n"
-        f"   • Duration:   <b>{elapsed} minutes</b>\n"
-        f"   • Original P: {score_pct}% risk\n"
-    )
-    if actual:
-        path_str = " ➜ ".join(actual)
-        msg += f"\n🔗 <b>Observed Mismatched Sequence:</b>\n   {path_str}\n"
-        
-    msg += (
-        f"\n🛠 <b>Follow-Up Actions:</b>\n"
-        f"   1. Standard close — node self-recovered successfully.\n"
-        f"   2. Review if triggered by a planned maintenance window.\n"
-        f"   3. If flapping interface, apply dampening:\n"
-        f"      <code>dampening 15 750 2000 60</code>"
-    )
-    return msg
-
-def format_llm_summary(payload: dict) -> str:
-    node = payload.get("node", "UNKNOWN")
-    llm_summary = payload.get("llm_summary", {})
-    what = llm_summary.get("what", "N/A")
-    why = llm_summary.get("why", "N/A")
-    action = llm_summary.get("action", "N/A")
-    impact = llm_summary.get("impact", "N/A")
-    urgency = llm_summary.get("urgency", "N/A")
-    
-    msg = (
-        f"💡 <b>BSNL NOC LLM DIAGNOSTIC INSIGHT</b>\n"
-        f"   Node: <code>{node}</code>\n\n"
-        f"📝 <b>WHAT:</b> {what}\n\n"
-        f"❓ <b>WHY:</b> {why}\n\n"
-        f"🛠 <b>ACTION:</b> {action}\n\n"
-        f"⚡ <b>IMPACT:</b> {impact}\n\n"
-        f"🚨 <b>URGENCY:</b> <b>{urgency}</b>"
-    )
-    return msg
+# format_llm_summary removed in favor of queue_event("LLM_INSIGHT", ...)
