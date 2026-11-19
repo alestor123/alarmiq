@@ -123,6 +123,9 @@ secrets.json
 config.local.yaml
 credentials.json
 
+# Generated prediction ledger
+backend/data/false_positives.jsonl
+
 # Cache
 .cache/
 *.cache

@@ -850,7 +850,16 @@ class NodeRiskPredictor:
         """
         try:
             import telegram_notifier
-            telegram_notifier.queue_event(event_type, rec, ts.isoformat())
+            if event_type == "NEW_PREDICTION":
+                msg = telegram_notifier.format_new_prediction(rec, ts)
+            elif event_type == "TRUE_POSITIVE":
+                msg = telegram_notifier.format_true_positive(rec, ts)
+            elif event_type == "FALSE_POSITIVE":
+                msg = telegram_notifier.format_false_positive(rec, ts)
+            else:
+                msg = None
+            if msg:
+                telegram_notifier.queue_message(msg)
         except Exception as e:
             print(f"[telegram] Failed to queue notification: {e}")
 

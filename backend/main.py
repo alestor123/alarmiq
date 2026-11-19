@@ -26,7 +26,10 @@ from ml_pipeline import normalise_node
 from socketio_server import sio, set_predictor_ref, broadcast_prediction, broadcast_llm_summary, get_status as sio_get_status
 from llm_summarizer import summarize_node_alert
 
-DATA_PATH  = os.path.join(os.path.dirname(__file__), "..", "alarms_scrubbed6.json")
+DATA_PATH  = os.environ.get(
+    "ALARM_DATASET_PATH",
+    os.path.join(os.path.dirname(__file__), "..", "alarms_scrubbed6.json"),
+)
 DASHBOARD  = os.path.join(os.path.dirname(__file__), "dashboard.html")
 PUBLIC_DIR = os.path.join(os.path.dirname(__file__), "..", "public")
 
@@ -225,6 +228,11 @@ def _simulation_thread(loop: asyncio.AbstractEventLoop, score_every: int = 1000)
 
     sim_state["total"] = len(alarms)
     print(f"[sim] Replaying {len(alarms):,} alarms (background thread)...")
+
+    if not alarms:
+        sim_state["running"] = False
+        print("[sim] Replay aborted: alarm dataset is missing or contains no valid records.")
+        return
 
     def push(payload):
         asyncio.run_coroutine_threadsafe(_update_queue.put(payload), loop)
@@ -580,6 +588,11 @@ def change_speed(payload: SpeedPayload):
 async def restart_sim():
     if sim_state["running"]:
         return {"status": "already running"}
+    if _uploaded_alarms is None and not os.path.isfile(DATA_PATH):
+        raise HTTPException(
+            status_code=503,
+            detail="Alarm dataset is unavailable. Configure ALARM_DATASET_PATH to a mounted dataset file or upload a JSON dataset.",
+        )
     loop = asyncio.get_event_loop()
     t = threading.Thread(target=_simulation_thread, args=(loop,), daemon=True)
     t.start()

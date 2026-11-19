@@ -164,16 +164,14 @@ async def summarize_node_alert(
                 endpoint_ok = True
             except Exception:
                 if "ollama:" in target_endpoint:
-                    for host in ("localhost:", "127.0.0.1:"):
-                        fallback = target_endpoint.replace("ollama:", host)
-                        try:
-                            ping_url = fallback.replace("/api/generate", "/api/tags")
-                            await client.get(ping_url, timeout=2.0)
-                            target_endpoint = fallback
-                            endpoint_ok = True
-                            break
-                        except Exception:
-                            pass
+                    fallback = target_endpoint.replace("ollama:", "localhost:")
+                    try:
+                        ping_url = fallback.replace("/api/generate", "/api/tags")
+                        await client.get(ping_url, timeout=2.0)
+                        target_endpoint = fallback
+                        endpoint_ok = True
+                    except Exception:
+                        pass
 
             if not endpoint_ok:
                 print(f"[llm] Neither ollama nor localhost endpoints are reachable. Disabling summary.")
@@ -278,86 +276,4 @@ async def summarize_node_alert(
             }
             print(f"[llm] Successfully generated summary for {node} in {latency_ms}ms.")
             return summary_result
-
-
-TELEGRAM_SYSTEM_PROMPT = """You are a NOC (Network Operations Center) assistant for BSNL.
-Your task is to write a Telegram alert message based on the provided JSON event data.
-The event_type can be NEW_PREDICTION, TRUE_POSITIVE, FALSE_POSITIVE, or LLM_INSIGHT.
-
-Rules:
-- Output ONLY the formatted HTML string. Do not output JSON. Do not include markdown code block backticks like ```html.
-- Use Telegram-supported HTML tags (<b>, <i>, <code>, <u>, <s>, <a href="...">).
-- Keep it concise, professional, and visually appealing using emojis (🚨, ✅, ℹ️, 🛠, etc.).
-- Ensure critical numbers, hostnames, and statuses are bolded or wrapped in <code>.
-- Do NOT output preamble, just the final formatted string ready to be sent to Telegram.
-"""
-
-async def generate_telegram_message(event_type: str, rec: dict, ts_str: str) -> Optional[str]:
-    """
-    Query Ollama to generate a formatted Telegram message string for a given event.
-    """
-    if not _HTTPX_AVAILABLE:
-        return None
-
-    # Wait for the semaphore so we don't overload Ollama
-    async with _llm_semaphore:
-        target_endpoint = OLLAMA_ENDPOINT
-        target_model = OLLAMA_MODEL
-
-        # Dynamic endpoint resolution & model selection
-        async with httpx.AsyncClient(timeout=httpx.Timeout(TIMEOUT_SECONDS)) as client:
-            endpoint_ok = False
-            try:
-                ping_url = target_endpoint.replace("/api/generate", "/api/tags")
-                await client.get(ping_url, timeout=2.0)
-                endpoint_ok = True
-            except Exception:
-                if "ollama:" in target_endpoint:
-                    for host in ("localhost:", "127.0.0.1:"):
-                        fallback = target_endpoint.replace("ollama:", host)
-                        try:
-                            ping_url = fallback.replace("/api/generate", "/api/tags")
-                            await client.get(ping_url, timeout=2.0)
-                            target_endpoint = fallback
-                            endpoint_ok = True
-                            break
-                        except Exception:
-                            pass
-
-            if not endpoint_ok:
-                print(f"[llm] Neither ollama nor localhost endpoints are reachable. Disabling Telegram generation.")
-                return None
-
-            detected_model = await _detect_best_model(client, target_endpoint)
-            if detected_model:
-                target_model = detected_model
-
-            user_prompt = f"Event Type: {event_type}\nTimestamp: {ts_str}\n\nEvent Data:\n{json.dumps(rec, indent=2)}\n\nGenerate the Telegram HTML message:"
-
-            payload = {
-                "model": target_model,
-                "system": TELEGRAM_SYSTEM_PROMPT,
-                "prompt": user_prompt,
-                "stream": False,
-                "options": {
-                    "temperature": 0.3,
-                },
-            }
-
-            try:
-                print(f"[llm] Generating Telegram message for {rec.get('node', 'unknown')} using {target_model}...")
-                response = await client.post(target_endpoint, json=payload)
-                response.raise_for_status()
-                result = response.json()
-                raw_text = result.get("response", "").strip()
-
-                if raw_text.startswith("```"):
-                    lines = raw_text.split("\n")
-                    lines = [l for l in lines if not l.startswith("```")]
-                    raw_text = "\n".join(lines).strip()
-
-                return raw_text
-            except Exception as e:
-                print(f"[llm] Error generating Telegram message: {e}")
-                return None
 
