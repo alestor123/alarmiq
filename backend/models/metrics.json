@@ -1,0 +1,94 @@
+{
+  "best_model": "XGBoost",
+  "roc_auc": 0.8922,
+  "avg_precision": 0.2494,
+  "confusion_matrix": [
+    [
+      45725,
+      9091
+    ],
+    [
+      278,
+      2979
+    ]
+  ],
+  "classification_report": {
+    "0": {
+      "precision": 0.9939569158533139,
+      "recall": 0.8341542615294805,
+      "f1-score": 0.9070710877909918,
+      "support": 54816.0
+    },
+    "1": {
+      "precision": 0.2468102734051367,
+      "recall": 0.9146453791832975,
+      "f1-score": 0.38872577803875513,
+      "support": 3257.0
+    },
+    "accuracy": 0.8386685723141564,
+    "macro avg": {
+      "precision": 0.6203835946292253,
+      "recall": 0.874399820356389,
+      "f1-score": 0.6478984329148735,
+      "support": 58073.0
+    },
+    "weighted avg": {
+      "precision": 0.952053507824562,
+      "recall": 0.8386685723141564,
+      "f1-score": 0.8779999071414123,
+      "support": 58073.0
+    }
+  },
+  "feature_importances": {
+    "total_alarms": 0.016061315312981606,
+    "alarm_rate_per_hour": 0.02194259874522686,
+    "critical_count": 0.01053216215223074,
+    "major_count": 0.01912458799779415,
+    "minor_count": 0.007442998234182596,
+    "warning_count": 0.018974708393216133,
+    "cleared_count": 0.15640228986740112,
+    "critical_ratio": 0.008876805193722248,
+    "severity_escalation_score": 0.2808077335357666,
+    "unique_conditions": 0.026174984872341156,
+    "alarm_burst_15min": 0.0063570295460522175,
+    "minutes_since_last_critical": 0.006688094697892666,
+    "trend_last_30m": 0.009735258296132088,
+    "major_ratio": 0.009680680930614471,
+    "minor_ratio": 0.012115605175495148,
+    "warning_ratio": 0.007609277963638306,
+    "cleared_ratio": 0.10151532292366028,
+    "alarm_density": 0.011031650938093662,
+    "bgp_down_count": 0.007953615859150887,
+    "link_down_count": 0.008163996040821075,
+    "optical_alarm_count": 0.011104549281299114,
+    "fru_removed_count": 0.021732982248067856,
+    "pw_updown_count": 0.009256542660295963,
+    "isis_down_count": 0.01522623561322689,
+    "ospf_down_count": 0.019738951697945595,
+    "ssh_failure_count": 0.009422321803867817,
+    "cefc_power_count": 0.009686245582997799,
+    "satellite_problem_count": 0.01893012411892414,
+    "performance_iface_count": 0.06823553889989853,
+    "node_failure_rate": 0.04865458607673645,
+    "node_avg_daily_alarms": 0.02082115039229393
+  },
+  "all_models": {
+    "RandomForest": {
+      "ap": 0.0808
+    },
+    "XGBoost": {
+      "ap": 0.1972
+    },
+    "LogisticRegression": {
+      "ap": 0.0509
+    }
+  },
+  "train_samples": 232290,
+  "test_samples": 58073,
+  "positive_rate": 0.0142,
+  "optimal_threshold": 0.2432,
+  "threshold_precision": 0.2468,
+  "threshold_recall": 0.9146,
+  "has_calibrator": true,
+  "model_name": "XGBoost"
+}

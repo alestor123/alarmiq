@@ -95,6 +95,14 @@ instance/
 
 # ML / Data Science
 models/
+!backend/models/
+!backend/models/best_model.pkl
+!backend/models/scaler.pkl
+!backend/models/feature_cols.pkl
+!backend/models/node_stats.pkl
+!backend/models/transition_matrix.pkl
+!backend/models/calibrator.pkl
+!backend/models/metrics.json
 checkpoints/
 wandb/
 mlruns/
